@@ -1,5 +1,7 @@
 # FANTASIAN Save Transfer
 
+[![tests](https://github.com/RobThePCGuy/Fantasian-Save-Transfer/actions/workflows/test.yml/badge.svg)](https://github.com/RobThePCGuy/Fantasian-Save-Transfer/actions/workflows/test.yml)
+
 You put sixty hours into FANTASIAN on Apple Arcade. Neo Dimension came out on Steam, you
 bought it, and it started you at zero.
 
