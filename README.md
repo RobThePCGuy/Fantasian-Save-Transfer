@@ -10,10 +10,10 @@ The save is still yours. This moves it.
 ```
 Found 4 save slot(s):
 
-  slot 1     2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
-  autosave   2021/06/11 11:52:45    1.0h     3,980 G   NewTownEn
-  slot 2     2021/08/23 11:42:06   16.6h    35,368 G   CityVibra
-  slot 3     2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
+  GameData0  2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
+  GameData10 2021/06/11 11:52:45    1.0h     3,980 G   NewTownEn
+  GameData1  2021/08/23 11:42:06   16.6h    35,368 G   CityVibra
+  GameData2  2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
 ```
 
 One file, standard library only, Python 3.8 and up. Nothing to install.
@@ -82,9 +82,9 @@ python3 fantasian.py edit root.json --insert-all-weapons --insert-all-armors
 python3 fantasian.py edit root.json --add-exp-mult 4 --add-sp-points 400
 ```
 
-By default it edits the manual slot with the most time on it; `--slot N` picks one. The
-file is backed up before it is written, and a command that finds nothing to do says so and
-writes nothing.
+By default it edits whichever save has the most time on it; `--slot N` names one, using the
+same `GameData` numbers the listing shows. The file is backed up before it is written, and
+a command that finds nothing to do says so and writes nothing.
 
 `--insert-or-add-sp-capsules`, `--insert-all-gate-items` and
 `--insert-all-upgrade-materials` are Part 2 content. Do not use them before you have
@@ -115,8 +115,13 @@ python3 fantasian.py slots                 what is in a save
 python3 fantasian.py self-test             check the encryption on your machine
 ```
 
-Slot numbering is the game's, not the menu's: `0` is slot 1, `1` is slot 2, `2` is slot 3,
-`10` is the autosave.
+Saves are listed by file name: `GameData0`, `GameData1`, `GameData2`, `GameData10`. That
+name is the only slot identity a save has. **Nothing inside a save says which slot the
+game's own menu calls it**, so this tool does not claim to know: it shows you the date,
+playtime, money and location, which is what you will recognise, and leaves the numbering
+alone. Earlier versions printed "slot 1" and "autosave" against those numbers; that mapping
+was inherited from elsewhere, never checked, and a player found it disagreeing with what
+the Mac game showed.
 
 ## How it works
 
@@ -145,19 +150,20 @@ byte-identical, and the row keeps its own key, UUID and device name. Editing one
 leaves the others alone, and an untouched Apple Arcade save rebuilds byte for byte,
 records in the order the game itself wrote them.
 
-**It puts Neo Dimension slots in the order the game writes them.** Slot 1, autosave, then
-slots 2 and 3. Slots are addressed by position in that format, so a file in a different
-order edits a save you did not ask for. Asking for slot 2 on a wrongly ordered file edited
-the one-hour autosave instead.
+**It orders the Neo Dimension file the way that game's save editor expects.** That editor
+addresses saves by position rather than by name, so a file in a different order gets the
+wrong save edited: on a wrongly ordered file, asking it for the second save reached a
+one-hour save from years earlier instead. Apple Arcade payloads are left in the game's own
+order, which is not the same one.
 
 **It checks its own work.** Every record written is decrypted again and re-parsed first,
 and an account transfer reads the result back and compares it against the source before it
 says it worked.
 
 There is one thing it cannot fix, so it warns instead: an Apple Arcade save with no
-autosave slot in it. The game handles that fine, but slots are addressed by position on
-the Neo Dimension side, so your slot 2 will read as the autosave until the game writes its
-own.
+`GameData10` in it. The game handles that fine, but the Neo Dimension save editor expects
+one and counts positions, so it will misread which save is which. Name saves with `--slot`
+rather than trusting that editor's numbering.
 
 ## No dependencies, on purpose
 

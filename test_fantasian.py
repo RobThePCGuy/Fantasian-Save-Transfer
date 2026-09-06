@@ -284,11 +284,15 @@ class Reading(Base):
             ft.load_save(os.path.join(self.tmp, "nope.sqlite"))
 
     def test_describes_a_slot(self):
+        """A save is named by its file. Nothing inside a save says which slot the
+        game calls it, so the tool must not invent one."""
         line = ft.describe({"path": "Data/GameData10.json",
                             "dataString": SLOTS["Data/GameData10.json"]})
-        self.assertIn("autosave", line)
+        self.assertIn("GameData10", line)
         self.assertIn("3,980 G", line)
         self.assertIn("NewTownEn", line)
+        for invented in ("slot 1", "slot 2", "slot 3", "autosave"):
+            self.assertNotIn(invented, line)
 
     def test_describe_survives_a_broken_slot(self):
         line = ft.describe({"path": "Data/GameData0.json", "dataString": "{not json"})
@@ -397,12 +401,12 @@ class ToSteam(Base):
             with self.assertRaises(ft.SaveError):
                 run(["to-steam", self.folder, "--install"])
 
-    def test_warns_when_there_is_no_autosave(self):
+    def test_warns_when_gamedata10_is_missing(self):
         text = out_of(["to-steam", self.folder, "-o", self.out, "--slots", "0", "1"])
-        self.assertIn("no autosave slot", text)
+        self.assertIn("no GameData10", text)
 
-    def test_no_warning_when_the_autosave_is_there(self):
-        self.assertNotIn("no autosave slot",
+    def test_no_warning_when_gamedata10_is_there(self):
+        self.assertNotIn("no GameData10",
                          out_of(["to-steam", self.folder, "-o", self.out]))
 
     def test_reconverting_its_own_output_is_stable(self):
@@ -547,9 +551,28 @@ class Editing(Base):
         with self.assertRaises(ft.SaveError):
             run(["edit", self.steam, "--slot", "7", "--add-money", "1"])
 
-    def test_picks_the_longest_manual_slot_not_the_autosave(self):
-        text = out_of(["edit", self.steam, "--add-money", "1"])
-        self.assertIn("Editing slot 1", text)
+    def test_default_picks_the_longest_save(self):
+        """Checked by which save actually changed, not by what was printed."""
+        run(["edit", self.steam, "--add-money", "7"])
+        money = {ft.slot_number(r["path"]):
+                 json.loads(ft.unpack(r)["GameSystemInfo"])["_money"]
+                 for r in ft.load_save(self.steam).records}
+        self.assertEqual(money, {"0": 35875, "1": 35368, "2": 30000, "10": 3980})
+
+    def test_default_will_take_gamedata10_when_it_is_the_longest(self):
+        """No save is skipped for looking like an autosave. Which file that is
+        cannot be known, so guessing would edit the wrong save."""
+        folder = self.arcade("LONGAUTO", slots={
+            "Data/GameData0.json": make_slot(100, 1, "A", "2026/01/01 00:00:00"),
+            "Data/GameData10.json": make_slot(99999, 2, "B", "2026/01/02 00:00:00"),
+        })
+        out = os.path.join(self.tmp, "longauto.json")
+        run(["to-steam", folder, "-o", out])
+        run(["edit", out, "--add-money", "5"])
+        money = {ft.slot_number(r["path"]):
+                 json.loads(ft.unpack(r)["GameSystemInfo"])["_money"]
+                 for r in ft.load_save(out).records}
+        self.assertEqual(money, {"0": 1, "10": 7})
 
     def test_backs_up_the_steam_file(self):
         run(["edit", self.steam, "--add-money", "1"])

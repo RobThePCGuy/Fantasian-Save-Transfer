@@ -196,7 +196,14 @@ def decrypt(data):
 # A loaded save, whatever it came from
 # ---------------------------------------------------------------------------
 
-SLOT_NAMES = {"0": "slot 1", "1": "slot 2", "2": "slot 3", "10": "autosave"}
+# Saves are named GameData0, GameData1, GameData2, GameData10 on disk, and that
+# name is the only slot identity there is: nothing inside a save record says
+# which slot it belongs to, so there is no way to derive what the game's own
+# load screen calls it. Earlier versions of this tool printed "slot 1", "slot 2"
+# and "autosave" against those numbers. That mapping was inherited, never
+# checked, and a player reported it disagreeing with the Mac game's menu, so the
+# file name is what gets shown now. It is also what --slot takes, which keeps
+# the thing you read and the thing you type the same.
 
 
 class Save:
@@ -234,15 +241,22 @@ def slot_number(path):
 
 
 def slot_label(path):
-    return SLOT_NAMES.get(slot_number(path), "slot " + slot_number(path))
+    """What to call a save on screen: its file name, which is all the save
+    itself knows about which slot it is."""
+    n = slot_number(path)
+    return "GameData" + n if n.isdigit() else n
 
 
 def canonical_order(records):
-    """Order records the way the game writes them: manual slot 1, the autosave,
-    then the remaining manual slots.
+    """Put records in GameData0, GameData10, GameData1, GameData2 order.
 
-    This is not cosmetic. The editing commands address slots by position the way
-    FantasianND-Save-Editor does, so a file in another order edits the wrong save.
+    Only the Neo Dimension file needs this, and only because
+    FantasianND-Save-Editor addresses slots there by position rather than by
+    name: it takes record 1 as the quicksave and the rest as ordinary saves. So
+    a file handed to that editor in another order gets the wrong save edited.
+    Whether record 1 really is the quicksave is that editor's claim, inherited
+    here to stay compatible with it, and it is not something the save files
+    themselves say. Apple Arcade payloads keep the game's own order instead.
     """
     def key(record):
         n = slot_number(record["path"])
@@ -914,9 +928,10 @@ def cmd_to_steam(args):
 
 def warn_missing_autosave(records):
     if not any(slot_number(r["path"]) == "10" for r in records):
-        print("\nHeads up: this save has no autosave slot in it. The game is fine with "
-              "that, but the editing commands address slots by position and expect one, "
-              "so your slot 2 will read as the autosave until the game writes its own.")
+        print("\nHeads up: there is no GameData10 in this save. The game is fine with "
+              "that, but FantasianND-Save-Editor addresses slots by position and expects "
+              "one, so it will read the second save here as the quicksave. Pick saves by "
+              "name with --slot rather than trusting its numbering.")
 
 
 def cmd_to_account(args):
@@ -995,15 +1010,16 @@ def cmd_edit(args):
     print(f"\n{len(save)} save slot(s) in {save.source}:\n")
     show(save.records)
 
-    ordered = save.ordered()
     if args.slot is None:
-        record = max(
-            (r for r in ordered if slot_number(r["path"]) != "10"),
-            key=lambda r: json.loads(unpack(r).get("GameSystemInfo", "{}"))
-                              .get("_playTimeSec", 0),
-            default=None)
-        if record is None:
-            raise SaveError("this save has no manual slot to edit")
+        # Whichever save has the most time on it, autosaves included. Skipping
+        # what looks like an autosave would mean guessing which file that is,
+        # and nothing in a save says so.
+        record = max(save.records,
+                     key=lambda r: json.loads(unpack(r).get("GameSystemInfo", "{}"))
+                                       .get("_playTimeSec", 0))
+        print(f"\nNo --slot given, so taking the one with the most time on it. "
+              f"Pick another by name, for example --slot "
+              f"{slot_number(save.records[0]['path'])}.")
     else:
         record = save.slot(args.slot)
         if record is None:
@@ -1145,8 +1161,7 @@ def build_parser():
     t.add_argument("--auto-template", action="store_true",
                    help="find the Neo Dimension save on this machine and merge into it")
     t.add_argument("--slots", metavar="N", nargs="+", default=None,
-                   help="only these slots, by GameData number (0 = slot 1, 1 = slot 2, "
-                        "2 = slot 3, 10 = autosave)")
+                   help="only these saves, by GameData number, as shown by `slots`")
     t.add_argument("--install", action="store_true",
                    help="write straight into the Neo Dimension save folder, backing up "
                         "what is there first. Close the game first.")
@@ -1172,8 +1187,8 @@ def build_parser():
     e = sub.add_parser("edit", help="change a save: money, items, experience")
     e.add_argument("save", nargs="?", help=src)
     e.add_argument("--slot", metavar="N",
-                   help="which slot, by GameData number. Default: the manual slot with "
-                        "the most time on it.")
+                   help="which save, by GameData number: 0 for GameData0, 10 for "
+                        "GameData10. Default: whichever has the most time on it.")
     e.add_argument("-o", "--output",
                    help="write here instead of back into the save it read")
     e.add_argument("--print-save", action="store_true",
