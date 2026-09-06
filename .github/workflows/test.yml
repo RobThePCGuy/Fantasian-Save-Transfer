@@ -22,6 +22,6 @@ jobs:
       # No install step on purpose. The tool has no dependencies, and a build
       # that needed one would be a regression.
       - name: encryption self-test
-        run: python fantasian_transfer.py --self-test
+        run: python fantasian.py self-test
       - name: tests
-        run: python test_transfer.py
+        run: python test_fantasian.py
