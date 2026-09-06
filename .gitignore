@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+root.json
+root_*.json
+*.backup_*
+FANTASIAN/
+FANTASIAN.zip
+SaveDataEntity.sqlite*
