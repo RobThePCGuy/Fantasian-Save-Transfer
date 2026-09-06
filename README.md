@@ -47,9 +47,9 @@ python3 fantasian.py to-account /path/to/old/FANTASIAN
 ```
 
 ```
-  1. You:  start FANTASIAN and load any save belonging to THIS account.
+  1. You:  start FANTASIAN and sit at the main menu.
   2. Tool: move this account's saves aside, put the old account's saves in.
-  3. You:  in game, Esc to the menu, Load, pick your save, load it.
+  3. You:  open Load. The old saves are listed. Load the one you want.
   4. Tool: take the old saves out, put this account's saves back.
   5. You:  in game, reach a save point and save. That is the write that counts.
 ```
@@ -58,9 +58,21 @@ Step 3 gets your progress into the running game's memory. Step 4 puts the accoun
 database back underneath it. Step 5 makes the game write that progress out through Core
 Data, which finally gives iCloud something it recognises and will upload.
 
-The account you are moving *to* needs a save of its own first, because the game has to be
-running and loaded into one for this to work. Sign in as that account, start FANTASIAN,
-play until it saves once, then come back.
+The main menu is enough at step 1. The game reads the save files each time the Load screen
+opens, so swapped-in saves appear without it having loaded anything first. This was checked
+by watching the game do it: with the files swapped, the Load screen listed the other
+account's Slot 1, Slot 2 and Slot 10 with their real dates and play times.
+
+**Expect the Load screen to look wrong after step 4.** Once your own files are back, it can
+show NO DATA or keep showing the old list. The game is holding a stale handle on a database
+that moved underneath it, and it comes right the next time the game starts. Your files are
+fine, and the tool reads them back and shows you so. **Do not quit to fix it.** Quitting
+throws away the progress sitting in memory, which is the entire point of the exercise. Save
+first.
+
+The account you are moving *to* needs a save of its own first, so there is a database to
+put back under the game at step 4. Sign in as that account, start FANTASIAN, play until it
+saves once, then come back.
 
 `--dry-run` prints the plan and touches nothing. `--into FOLDER` works on somewhere other
 than this Mac's own save. The whole folder is copied aside before anything moves, and the
@@ -232,8 +244,11 @@ IDs are not guaranteed identical across both releases. The Steam transfer is con
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
 The account transfer does file moving, and that part is verified: the right saves are in
-place at each stage, and the account's own files come back byte for byte. The game steps
-are yours, and the procedure they follow is one that has worked by hand.
+place at each stage, and the account's own files come back byte for byte. Steps 1 to 4 have
+also been watched end to end against the running game, on the macOS Apple Arcade build,
+with the other account's saves appearing in the Load screen and the original save restored
+byte for byte afterwards. Step 5, the in-game save, is the one nobody has watched through
+this tool, and it is the step the whole thing turns on.
 
 Back up, and look at the slot in-game before you put another sixty hours on top of it.
 

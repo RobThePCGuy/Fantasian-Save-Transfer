@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -1099,13 +1099,22 @@ back out under the account signed in here.
 
 Five steps. This tool does the file moving, you do the game.
 
-  1. You:  start FANTASIAN and load any save belonging to THIS account.
+  1. You:  start FANTASIAN and sit at the main menu.
   2. Tool: move this account's saves aside, put the old account's saves in.
-  3. You:  in game, Esc to the menu, Load, pick your save, load it.
+  3. You:  open Load. The old saves are listed. Load the one you want.
   4. Tool: take the old saves out, put this account's saves back.
   5. You:  in game, reach a save point and save. That is the write that counts.
 
-Then quit, start the game again, and the save is yours on this account.""")
+The main menu is enough at step 1. The game reads the save files each time you
+open the Load screen, so the swapped-in saves appear without the game having
+loaded anything first.
+
+One thing to expect at step 4, so it does not frighten you: once your own files
+are back, the game's Load screen can show NO DATA, or the old list. It is
+holding a stale handle on a database that moved underneath it. Your files are
+fine and this tool checks them. Do NOT quit to fix it. Quitting throws away the
+progress sitting in memory, which is the whole point of the exercise. Save
+first, at step 5. The list comes right the next time the game starts.""")
 
         if args.dry_run:
             print(f"\n{STEP}Dry run. Nothing was moved.")
@@ -1118,11 +1127,11 @@ Then quit, start the game again, and the save is yours on this account.""")
               f"back over\n  {target_folder}")
 
         running = game_is_running()
-        print(STEP + "STEP 1. Start FANTASIAN and load any save that belongs to the\n"
-              "account signed in on this Mac. Leave the game running.")
+        print(STEP + "STEP 1. Start FANTASIAN and leave it sitting at the main menu.\n"
+              "You do not need to load anything first.")
         if running is False:
             print("\n(The game does not look like it is running yet.)")
-        _wait("\n  Loaded into a save, game still open? Press return. ")
+        _wait("\n  Game open at the main menu? Press return. ")
 
         keep_dir = os.path.join(os.path.dirname(backup.rstrip(os.sep)),
                                 os.path.basename(backup) + ".in-use")
@@ -1135,9 +1144,9 @@ Then quit, start the game again, and the save is yours on this account.""")
         print("\n  The game will now offer:\n")
         show(swapped.records, indent="    ")
 
-        print(STEP + "STEP 3. In the game: Esc, back to the menu, Load. The saves above\n"
-              "are the ones you should see. Load the one you want to keep, and let it\n"
-              "finish loading into the world.")
+        print(STEP + "STEP 3. In the game, open Load. The saves listed above are the\n"
+              "ones you should see. Load the one you want to keep, and let it finish\n"
+              "loading into the world.")
         _wait("\n  Loaded into the save you want? Press return. ")
 
         print(STEP + "STEP 4. Putting this account's own saves back.")
@@ -1152,7 +1161,14 @@ Then quit, start the game again, and the save is yours on this account.""")
         back = load_save(target_folder)
         print("\n  This account's own save is back on disk:\n")
         show(back.records, indent="    ")
-        print("\n  Your progress is still loaded in the running game. That is the point.")
+        print("""
+  Your progress is still loaded in the running game. That is the point.
+
+  If you look at the Load screen now it may show NO DATA, or still show the old
+  list. The game is holding a stale handle on a database that moved underneath
+  it. The files are fine: they were just read back, above. Do NOT quit to fix
+  it, because quitting throws away the progress in memory and undoes all of
+  this. Save first.""")
 
         print(STEP + "STEP 5. In the game: walk to a save point and save, through the\n"
               "game's own menu. That save is the one iCloud uploads, and it is what\n"
