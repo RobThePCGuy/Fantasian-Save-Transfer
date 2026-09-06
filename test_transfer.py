@@ -301,6 +301,22 @@ class Converting(unittest.TestCase):
             if real_home is not None:
                 os.environ["HOME"] = real_home
 
+    def test_warns_when_there_is_no_autosave_slot(self):
+        """fantasia.py assumes record 1 is the autosave. Without one it reads a
+        real manual slot as the autosave, so the user gets told."""
+        import contextlib, io as _io
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ft.main([self.db, "-o", self.out, "--slots", "0", "1"])
+        self.assertIn("no autosave slot", buf.getvalue())
+
+    def test_no_warning_when_the_autosave_is_there(self):
+        import contextlib, io as _io
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ft.main([self.db, "-o", self.out])
+        self.assertNotIn("no autosave slot", buf.getvalue())
+
     def test_reconverting_its_own_output_is_stable(self):
         run([self.db, "-o", self.out])
         again = os.path.join(self.tmp, "again.json")

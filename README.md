@@ -121,6 +121,11 @@ one-hour autosave instead.
 **It checks its own work.** Every record it writes is decrypted again and re-parsed before
 the file is saved.
 
+There is one thing it cannot fix, so it warns instead: an Apple Arcade save that has no
+autosave slot in it. The game handles that fine, but the save editor assumes the second
+record is always the autosave, so it will read your slot 2 as one. Play until the game
+writes its own autosave before editing.
+
 ## No dependencies, on purpose
 
 One file, standard library only, Python 3.8 and up. The AES is written out in

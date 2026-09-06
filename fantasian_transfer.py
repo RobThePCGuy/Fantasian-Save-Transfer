@@ -615,6 +615,14 @@ def main(argv=None):
         json.dump(root, f, indent=4)
 
     print(f"\nWrote {out_path} with {len(existing)} slot(s).")
+
+    if not any(slot_number(r["path"]) == "10" for r in existing):
+        # fantasia.py assumes the second record is always the autosave. Without
+        # one it reads a real manual slot as the autosave and hides it.
+        print("\nHeads up: this save has no autosave slot in it. The game is fine with "
+              "that, but the FantasianND Save Editor assumes every save has one and "
+              "will treat your slot 2 as the autosave. Play until the game writes its "
+              "own autosave before editing.")
     if install_target:
         print("\nStart the game and load the slot to check it before you rely on it. "
               "To undo, copy the backup above back over root.json.")
