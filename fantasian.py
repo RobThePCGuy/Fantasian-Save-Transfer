@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -196,14 +196,21 @@ def decrypt(data):
 # A loaded save, whatever it came from
 # ---------------------------------------------------------------------------
 
-# Saves are named GameData0, GameData1, GameData2, GameData10 on disk, and that
-# name is the only slot identity there is: nothing inside a save record says
-# which slot it belongs to, so there is no way to derive what the game's own
-# load screen calls it. Earlier versions of this tool printed "slot 1", "slot 2"
-# and "autosave" against those numbers. That mapping was inherited, never
-# checked, and a player reported it disagreeing with the Mac game's menu, so the
-# file name is what gets shown now. It is also what --slot takes, which keeps
-# the thing you read and the thing you type the same.
+# What the game calls each file, checked against the game itself rather than
+# assumed. On the macOS Apple Arcade build, 2026-09-06, the Load screen offers
+# exactly ten manual slots, Slot 1 to Slot 10. The save the game showed in
+# Slot 1 was GameData1: same date to the second, same play time. GameData0 held
+# a NEWER save that appeared in no manual slot at all, which makes it the
+# autosave. So GameData<N> is Slot N, and GameData0 is the autosave.
+#
+# This overturns the mapping this tool started with, inherited from elsewhere,
+# which had GameData0 as slot 1 and GameData10 as the autosave. GameData10 is
+# Slot 10, an ordinary save like any other. Nothing inside a save record says
+# which slot it is, so this can only ever be established by looking, and it has
+# only been looked at on that one build. The file name is printed alongside the
+# slot name for that reason, and --slot always takes the file number.
+SLOT_NAMES = {"0": "autosave"}
+SLOT_NAMES.update({str(n): "slot %d" % n for n in range(1, 11)})
 
 
 class Save:
@@ -241,22 +248,25 @@ def slot_number(path):
 
 
 def slot_label(path):
-    """What to call a save on screen: its file name, which is all the save
-    itself knows about which slot it is."""
+    """The file name, which is what --slot takes, plus what the game calls it."""
     n = slot_number(path)
-    return "GameData" + n if n.isdigit() else n
+    name = "GameData" + n if n.isdigit() else n
+    known = SLOT_NAMES.get(n)
+    return "%-10s %-8s" % (name, known) if known else "%-10s %-8s" % (name, "")
 
 
 def canonical_order(records):
     """Put records in GameData0, GameData10, GameData1, GameData2 order.
 
-    Only the Neo Dimension file needs this, and only because
-    FantasianND-Save-Editor addresses slots there by position rather than by
-    name: it takes record 1 as the quicksave and the rest as ordinary saves. So
-    a file handed to that editor in another order gets the wrong save edited.
-    Whether record 1 really is the quicksave is that editor's claim, inherited
-    here to stay compatible with it, and it is not something the save files
-    themselves say. Apple Arcade payloads keep the game's own order instead.
+    This exists only to stay compatible with FantasianND-Save-Editor, which
+    addresses saves in the Neo Dimension file by position rather than by name
+    and expects that layout. It is not a claim about which save is which: that
+    editor reads record 1 as a quicksave, and record 1 in this order is
+    GameData10, which the game's own Load screen shows as Slot 10. Hand that
+    editor a file in another order and it edits a different save again, so the
+    order is kept and our own commands address saves by name instead.
+
+    Apple Arcade payloads keep the game's own order and are not touched.
     """
     def key(record):
         n = slot_number(record["path"])
@@ -928,10 +938,10 @@ def cmd_to_steam(args):
 
 def warn_missing_autosave(records):
     if not any(slot_number(r["path"]) == "10" for r in records):
-        print("\nHeads up: there is no GameData10 in this save. The game is fine with "
-              "that, but FantasianND-Save-Editor addresses slots by position and expects "
-              "one, so it will read the second save here as the quicksave. Pick saves by "
-              "name with --slot rather than trusting its numbering.")
+        print("\nHeads up: there is no GameData10 in this file. That is fine for the "
+              "game, but FantasianND-Save-Editor counts positions rather than reading "
+              "names, and expects one there, so its slot numbers will point at the "
+              "wrong saves. Use --slot here, which takes the file number.")
 
 
 STEP = "\n" + "-" * 72 + "\n"

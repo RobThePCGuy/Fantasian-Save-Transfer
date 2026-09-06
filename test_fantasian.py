@@ -284,15 +284,28 @@ class Reading(Base):
             ft.load_save(os.path.join(self.tmp, "nope.sqlite"))
 
     def test_describes_a_slot(self):
-        """A save is named by its file. Nothing inside a save says which slot the
-        game calls it, so the tool must not invent one."""
+        """The file name is always shown, because that is what --slot takes."""
         line = ft.describe({"path": "Data/GameData10.json",
                             "dataString": SLOTS["Data/GameData10.json"]})
         self.assertIn("GameData10", line)
         self.assertIn("3,980 G", line)
         self.assertIn("NewTownEn", line)
-        for invented in ("slot 1", "slot 2", "slot 3", "autosave"):
-            self.assertNotIn(invented, line)
+
+    def test_gamedata10_is_slot_ten_not_the_autosave(self):
+        """Checked against the game's own Load screen: it offers ten manual
+        slots, and GameData0 is the autosave rather than one of them. The
+        mapping this tool was built on had these two the other way round."""
+        self.assertEqual(ft.SLOT_NAMES["10"], "slot 10")
+        self.assertEqual(ft.SLOT_NAMES["0"], "autosave")
+        self.assertEqual(ft.SLOT_NAMES["1"], "slot 1")
+        self.assertEqual(max(int(n) for n in ft.SLOT_NAMES), 10)
+
+    def test_every_save_shows_its_file_name(self):
+        for path in ("Data/GameData0.json", "Data/GameData1.json",
+                     "Data/GameData10.json"):
+            line = ft.describe({"path": path,
+                                "dataString": SLOTS.get(path, SLOTS["Data/GameData0.json"])})
+            self.assertIn("GameData" + ft.slot_number(path), line)
 
     def test_describe_survives_a_broken_slot(self):
         line = ft.describe({"path": "Data/GameData0.json", "dataString": "{not json"})

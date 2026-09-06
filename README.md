@@ -10,10 +10,10 @@ The save is still yours. This moves it.
 ```
 Found 4 save slot(s):
 
-  GameData0  2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
-  GameData10 2021/06/11 11:52:45    1.0h     3,980 G   NewTownEn
-  GameData1  2021/08/23 11:42:06   16.6h    35,368 G   CityVibra
-  GameData2  2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
+  GameData0  autosave 2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
+  GameData10 slot 10  2021/06/11 11:52:45    1.0h     3,980 G   NewTownEn
+  GameData1  slot 1   2021/08/23 11:42:06   16.6h    35,368 G   CityVibra
+  GameData2  slot 2   2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
 ```
 
 One file, standard library only, Python 3.8 and up. Nothing to install.
@@ -137,13 +137,20 @@ python3 fantasian.py slots                 what is in a save
 python3 fantasian.py self-test             check the encryption on your machine
 ```
 
-Saves are listed by file name: `GameData0`, `GameData1`, `GameData2`, `GameData10`. That
-name is the only slot identity a save has. **Nothing inside a save says which slot the
-game's own menu calls it**, so this tool does not claim to know: it shows you the date,
-playtime, money and location, which is what you will recognise, and leaves the numbering
-alone. Earlier versions printed "slot 1" and "autosave" against those numbers; that mapping
-was inherited from elsewhere, never checked, and a player found it disagreeing with what
-the Mac game showed.
+Saves are listed by file name, `GameData0` through `GameData10`, next to what the game
+calls them. `--slot` always takes the file number.
+
+**`GameData<N>` is Slot N, and `GameData0` is the autosave.** That was checked against the
+game rather than assumed: on the macOS Apple Arcade build the Load screen offers exactly
+ten manual slots, Slot 1 to Slot 10, and the save shown in Slot 1 was `GameData1`, matching
+to the second on both date and play time. `GameData0` held a newer save that appeared in no
+manual slot.
+
+Worth saying plainly, because this tool started out with it backwards and so does the Neo
+Dimension save editor: **`GameData10` is Slot 10, an ordinary save.** It is not an
+autosave. Nothing inside a save record says which slot it is, so this can only be
+established by looking, and it has only been looked at on that one build. If yours
+disagrees, the file names are still exact and `--slot` still takes them.
 
 ## How it works
 
@@ -172,19 +179,20 @@ itself wrote them. Through an account transfer, the account's own save files are
 aside whole and put back byte for byte.
 
 **It orders the Neo Dimension file the way that game's save editor expects.** That editor
-addresses saves by position rather than by name, so a file in a different order gets the
-wrong save edited: on a wrongly ordered file, asking it for the second save reached a
-one-hour save from years earlier instead. Apple Arcade payloads are left in the game's own
-order, which is not the same one.
+counts positions rather than reading names, so a file in a different order gets the wrong
+save edited: on a wrongly ordered file, asking it for the second save reached a one-hour
+save from years earlier. The order is kept for compatibility, not because the positions
+mean what that editor thinks they mean. Apple Arcade payloads are left in the game's own
+order, which is a different one again.
 
 **It checks its own work.** Every record written is decrypted again and re-parsed before
 the file is saved, and each stage of an account transfer reads the folder back and shows
 you what the game will now find there.
 
-There is one thing it cannot fix, so it warns instead: an Apple Arcade save with no
-`GameData10` in it. The game handles that fine, but the Neo Dimension save editor expects
-one and counts positions, so it will misread which save is which. Name saves with `--slot`
-rather than trusting that editor's numbering.
+There is one thing it cannot fix, so it warns instead: a file with no `GameData10` in it.
+That is fine for the game, but the Neo Dimension save editor counts positions and expects
+one there, so its slot numbers end up pointing at the wrong saves. Use `--slot` here, which
+takes the file number.
 
 ## No dependencies, on purpose
 
