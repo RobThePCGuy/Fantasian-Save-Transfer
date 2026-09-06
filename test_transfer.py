@@ -26,6 +26,30 @@ def run(argv):
         return ft.main(argv)
 
 
+@contextlib.contextmanager
+def fake_home(path):
+    """Point the tool at a throwaway home directory.
+
+    HOME is enough on macOS and Linux. Windows resolves ~ from USERPROFILE and
+    ignores HOME entirely, so both get set, and OneDrive is cleared so the
+    runner's real one does not leak into the search.
+    """
+    patched = {"HOME": path, "USERPROFILE": path}
+    saved = {k: os.environ.get(k) for k in list(patched) + ["OneDrive",
+                                                           "OneDriveConsumer"]}
+    os.environ.update(patched)
+    os.environ.pop("OneDrive", None)
+    os.environ.pop("OneDriveConsumer", None)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def make_slot(play_seconds, money, map_id, date):
     """A save record shaped the way the game writes them."""
     payload = {
@@ -273,33 +297,24 @@ class Converting(unittest.TestCase):
                                        "dataString": SLOTS["Data/GameData0.json"]})
         with open(root, "w", encoding="utf-8") as f:
             json.dump({"dataString": json.dumps({"records": [original]})}, f)
-        before = open(root, encoding="utf-8").read()
+        with open(root, encoding="utf-8") as f:
+            before = f.read()
 
-        real_home = os.environ.get("HOME")
-        os.environ["HOME"] = home
-        try:
+        with fake_home(home):
             run([self.db, "--install"])
-        finally:
-            if real_home is not None:
-                os.environ["HOME"] = real_home
 
         backups = [f for f in os.listdir(data) if ".backup_" in f]
         self.assertEqual(len(backups), 1, os.listdir(data))
-        self.assertEqual(open(os.path.join(data, backups[0]), encoding="utf-8").read(),
-                         before)
+        with open(os.path.join(data, backups[0]), encoding="utf-8") as f:
+            self.assertEqual(f.read(), before)
         self.assertEqual(len(self.records(root)), 4)
 
     def test_install_without_a_steam_save_refuses(self):
         home = os.path.join(self.tmp, "emptyhome")
         os.makedirs(home)
-        real_home = os.environ.get("HOME")
-        os.environ["HOME"] = home
-        try:
+        with fake_home(home):
             with self.assertRaises(ft.SaveError):
                 run([self.db, "--install"])
-        finally:
-            if real_home is not None:
-                os.environ["HOME"] = real_home
 
     def test_warns_when_there_is_no_autosave_slot(self):
         """fantasia.py assumes record 1 is the autosave. Without one it reads a
@@ -328,15 +343,6 @@ class Discovery(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="fst_find_")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.real_home = os.environ.get("HOME")
-        self.real_onedrive = os.environ.get("OneDrive")
-
-    def tearDown(self):
-        if self.real_home is not None:
-            os.environ["HOME"] = self.real_home
-        os.environ.pop("OneDrive", None)
-        if self.real_onedrive is not None:
-            os.environ["OneDrive"] = self.real_onedrive
 
     def plant(self, *parts):
         data = os.path.join(self.tmp, *parts, "My Games",
@@ -347,26 +353,28 @@ class Discovery(unittest.TestCase):
             json.dump({"dataString": json.dumps({"records": []})}, f)
         return path
 
+    def found(self):
+        with fake_home(self.tmp):
+            return ft.find_steam_roots()
+
     def test_plain_documents(self):
         expected = self.plant("Documents")
-        os.environ["HOME"] = self.tmp
-        self.assertIn(expected, ft.find_steam_roots())
+        self.assertIn(expected, self.found())
 
     def test_documents_redirected_into_onedrive(self):
         expected = self.plant("OneDrive", "Documents")
-        os.environ["HOME"] = self.tmp
-        self.assertIn(expected, ft.find_steam_roots())
+        self.assertIn(expected, self.found())
 
     def test_proton_prefix(self):
         expected = self.plant(".local", "share", "Steam", "steamapps", "compatdata",
                               "2844850", "pfx", "drive_c", "users", "steamuser",
                               "Documents")
-        os.environ["HOME"] = self.tmp
-        self.assertIn(expected, ft.find_steam_roots())
+        self.assertIn(expected, self.found())
 
     def test_nothing_planted(self):
-        os.environ["HOME"] = self.tmp
-        self.assertEqual(ft.find_steam_roots(), [])
+        # Not assertEqual([]), because a machine that genuinely owns the game
+        # would legitimately turn one up outside the throwaway home.
+        self.assertFalse([p for p in self.found() if p.startswith(self.tmp)])
 
 
 if __name__ == "__main__":

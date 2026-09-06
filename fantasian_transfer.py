@@ -370,11 +370,37 @@ def canonical_order(records):
 # Finding the Steam save
 # ---------------------------------------------------------------------------
 
+def _windows_documents():
+    """Where Windows actually keeps Documents for this user.
+
+    Guessing ~/Documents is wrong on any machine where the folder has been
+    redirected, which OneDrive does by default on a lot of installs. Windows
+    records the real location, so ask it rather than guess.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders")
+        with key:
+            value, _ = winreg.QueryValueEx(key, "Personal")
+        return os.path.expandvars(value) if value else None
+    except OSError:
+        return None
+
+
 def _documents_dirs():
     """Every plausible Documents folder. Windows redirects it into OneDrive on a
     lot of machines, which is why this is a list and not a path."""
     home = os.path.expanduser("~")
-    out = [os.path.join(home, "Documents")]
+    out = []
+    real = _windows_documents()
+    if real:
+        out.append(real)
+    out.append(os.path.join(home, "Documents"))
     onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
     if onedrive:
         out.append(os.path.join(onedrive, "Documents"))
