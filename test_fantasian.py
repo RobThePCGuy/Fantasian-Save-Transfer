@@ -417,6 +417,10 @@ class ToSteam(Base):
 
 
 class ToAccount(Base):
+    """The transfer is a guided procedure: the tool moves files, the player
+    drives the game. What is worth testing is the file state at each point, and
+    that the account's own save comes back exactly as it was."""
+
     def setUp(self):
         super().setUp()
         self.old = self.arcade("OLD", keep_rows_in_wal=True)
@@ -425,51 +429,108 @@ class ToAccount(Base):
         })
         self.new_db = os.path.join(self.new, "SaveDataEntity.sqlite")
 
-    def test_payload_is_replaced(self):
-        run(["to-account", self.old, "--into", self.new])
-        after = ft.load_save(self.new)
-        self.assertEqual(len(after), 4)
-        self.assertEqual({r["path"]: ft.record_plaintext(r) for r in after.records},
-                         {r["path"]: ft.record_plaintext(r)
-                          for r in ft.load_save(self.old).records})
+    def digest(self, folder):
+        out = {}
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if os.path.isfile(path):
+                with open(path, "rb") as f:
+                    out[name] = hashlib.sha256(f.read()).hexdigest()
+        return out
 
-    def test_only_the_save_table_changes(self):
-        """The whole point. Everything CloudKit uses to tie this database to the
-        account must come through untouched, or iCloud replaces the lot."""
-        before = table_fingerprints(self.new_db)
-        run(["to-account", self.old, "--into", self.new])
-        after = table_fingerprints(self.new_db)
-        self.assertEqual(set(before), set(after))
-        changed = [t for t in before if before[t] != after[t]]
-        self.assertEqual(changed, ["ZGAMEDATAENTITY"])
+    def drive(self, argv, at_each_prompt=None):
+        """Run the guided flow, answering every prompt, optionally looking at
+        the folder each time it pauses."""
+        seen = []
 
-    def test_the_rows_identity_columns_survive(self):
-        run(["to-account", self.old, "--into", self.new])
-        con = sqlite3.connect(self.new_db)
-        row = con.execute("SELECT Z_PK, Z_ENT, ZID, ZUUID, ZDEVICENAME"
-                          " FROM ZGAMEDATAENTITY").fetchone()
-        con.close()
-        self.assertEqual(row, (7, 1, "root.json", "UUID-KEEP-ME", "Test Mac"))
+        def fake_wait(prompt):
+            seen.append(self.digest(self.new))
+            if at_each_prompt:
+                at_each_prompt(len(seen))
+            return True
 
-    def test_dry_run_writes_nothing(self):
-        before = table_fingerprints(self.new_db)
-        run(["to-account", self.old, "--into", self.new, "--dry-run"])
-        self.assertEqual(before, table_fingerprints(self.new_db))
-        self.assertFalse([d for d in os.listdir(self.tmp) if ".backup_" in d])
+        real = ft._wait
+        ft._wait = fake_wait
+        try:
+            run(argv)
+        finally:
+            ft._wait = real
+        return seen
 
-    def test_backs_the_folder_up(self):
-        run(["to-account", self.old, "--into", self.new])
+    def test_the_accounts_own_save_comes_back_untouched(self):
+        before = self.digest(self.new)
+        self.drive(["to-account", self.old, "--into", self.new])
+        self.assertEqual(before, self.digest(self.new))
+
+    def test_the_old_save_is_in_place_while_the_game_is_asked_to_load_it(self):
+        """Between step 2 and step 3 the folder must hold the OLD account's
+        saves, because that is what the game's load screen reads."""
+        looked = {}
+
+        def peek(n):
+            if n == 2:      # the pause after the swap
+                looked["paths"] = sorted(
+                    ft.slot_number(r["path"])
+                    for r in ft.load_save(self.new).records)
+
+        self.drive(["to-account", self.old, "--into", self.new], at_each_prompt=peek)
+        self.assertEqual(looked["paths"], ["0", "1", "10", "2"])
+
+    def test_the_accounts_own_save_is_back_before_it_is_asked_to_save(self):
+        """By step 5 the originals must be restored, so the game's own save
+        writes into the database this account owns."""
+        looked = {}
+
+        def peek(n):
+            if n == 3:      # the pause before saving in game
+                looked["paths"] = sorted(
+                    ft.slot_number(r["path"])
+                    for r in ft.load_save(self.new).records)
+
+        self.drive(["to-account", self.old, "--into", self.new], at_each_prompt=peek)
+        self.assertEqual(looked["paths"], ["0"])
+
+    def test_it_pauses_for_the_player_three_times(self):
+        self.assertEqual(len(self.drive(["to-account", self.old, "--into", self.new])), 3)
+
+    def test_nothing_is_left_lying_around(self):
+        self.drive(["to-account", self.old, "--into", self.new])
+        leftovers = [d for d in os.listdir(self.tmp) if d.endswith(".in-use")]
+        self.assertEqual(leftovers, [])
+
+    def test_a_backup_is_taken_first(self):
+        self.drive(["to-account", self.old, "--into", self.new])
         backups = [d for d in os.listdir(self.tmp) if d.startswith("NEW.backup_")]
         self.assertEqual(len(backups), 1)
-        restored = ft.load_save(os.path.join(self.tmp, backups[0]))
-        self.assertEqual(len(restored), 1)
+        kept = ft.load_save(os.path.join(self.tmp, backups[0]))
+        self.assertEqual(len(kept), 1)
+
+    def test_dry_run_moves_nothing(self):
+        before = self.digest(self.new)
+        run(["to-account", self.old, "--into", self.new, "--dry-run"])
+        self.assertEqual(before, self.digest(self.new))
+        self.assertFalse([d for d in os.listdir(self.tmp) if ".backup_" in d])
+
+    def test_it_reads_a_zip_source(self):
+        zpath = os.path.join(self.tmp, "OLD.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            for name in os.listdir(self.old):
+                z.write(os.path.join(self.old, name), "FANTASIAN/" + name)
+        looked = {}
+
+        def peek(n):
+            if n == 2:
+                looked["count"] = len(ft.load_save(self.new))
+
+        self.drive(["to-account", zpath, "--into", self.new], at_each_prompt=peek)
+        self.assertEqual(looked["count"], 4)
 
     def test_refuses_a_target_with_no_save(self):
         empty = os.path.join(self.tmp, "empty")
         os.makedirs(empty)
         with self.assertRaises(ft.SaveError) as caught:
             run(["to-account", self.old, "--into", empty])
-        self.assertIn("play until it saves once", str(caught.exception).lower())
+        self.assertIn("saves once", str(caught.exception))
 
     def test_refuses_a_steam_source(self):
         steam = os.path.join(self.tmp, "root.json")
@@ -481,6 +542,58 @@ class ToAccount(Base):
     def test_needs_a_source(self):
         with self.assertRaises(ft.SaveError):
             run(["to-account", "--into", self.new])
+
+    def test_it_will_not_run_with_nobody_at_the_keyboard(self):
+        """Every step needs a person driving the game, so a run with nothing on
+        stdin must stop rather than march through the swaps on its own."""
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO("")
+        try:
+            with self.assertRaises(ft.SaveError):
+                ft._wait("go? ")
+        finally:
+            sys.stdin = real_stdin
+
+
+class FileSwapping(Base):
+    def setUp(self):
+        super().setUp()
+        self.folder = self.arcade("LIVE", keep_rows_in_wal=True)
+        self.other = self.arcade("OTHER")
+
+    def names(self, folder):
+        return sorted(n for n in os.listdir(folder) if n.startswith("SaveDataEntity"))
+
+    def test_the_wal_and_shm_travel_with_the_sqlite(self):
+        """The current progress lives in the -wal, so a swap that carries only
+        the .sqlite hands the game an empty database."""
+        keep = os.path.join(self.tmp, "keep")
+        moved = ft.move_saves_out(self.folder, keep)
+        self.assertIn("SaveDataEntity.sqlite-wal", moved)
+        self.assertEqual(self.names(self.folder), [])
+        self.assertIn("SaveDataEntity.sqlite-wal", self.names(keep))
+
+    def test_a_full_round_trip_restores_every_byte(self):
+        before = {}
+        for n in self.names(self.folder):
+            with open(os.path.join(self.folder, n), "rb") as f:
+                before[n] = f.read()
+        keep = os.path.join(self.tmp, "keep")
+        ft.move_saves_out(self.folder, keep)
+        ft.copy_saves_in(self.other, self.folder)
+        ft.delete_saves(self.folder)
+        ft.move_saves_back(keep, self.folder)
+        after = {}
+        for n in self.names(self.folder):
+            with open(os.path.join(self.folder, n), "rb") as f:
+                after[n] = f.read()
+        self.assertEqual(before, after)
+
+    def test_copying_in_replaces_what_the_game_will_read(self):
+        keep = os.path.join(self.tmp, "keep")
+        ft.move_saves_out(self.folder, keep)
+        ft.copy_saves_in(self.other, self.folder)
+        self.assertEqual(len(ft.load_save(self.folder)), 4)
 
 
 class Editing(Base):

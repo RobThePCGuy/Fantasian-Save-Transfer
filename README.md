@@ -26,25 +26,47 @@ Everything below is the same thing from the command line.
 
 ## Move a save to another Apple Arcade account
 
-The one iCloud fights you on. Copying the save folder from the old account into the new
-one does not work: the game starts, syncs, and replaces your progress with the new
-account's empty save. The database carries sync metadata that belongs to the old account,
-iCloud sees a stranger's file, and throws it away.
+The one iCloud fights you on, and the reason it fights you is worth knowing before you
+start.
 
-So this does not copy the folder. It puts the old save **inside the database the new
-account already owns**, leaving every piece of that account's sync metadata untouched.
+FANTASIAN saves through Core Data with CloudKit mirroring. Core Data notices a change by
+writing rows into its own history tables, `ATRANSACTION` and `ACHANGE`, and iCloud only
+ever uploads what it finds there. Anything written into the save files from outside the
+game leaves no history at all, so iCloud never learns it happened, never uploads it, and on
+the next launch pulls its own copy straight back down over the top.
+
+That is why copying a save folder between accounts appears to work and is undone a moment
+later. **No offline edit to these files survives.** The only write that sticks is one the
+game itself makes.
+
+So this is a guided procedure, not something a tool can do on its own. It moves the files
+at the right moments while you drive the game:
 
 ```bash
 python3 fantasian.py to-account /path/to/old/FANTASIAN
 ```
 
-The new account needs to have saved at least once, so there is a database to write into.
-Sign in, start FANTASIAN, play to the first save, quit. Then run the command, start the
-game, load the slot, and **save once through the game's own menu**. That save is what
-pushes your progress up under the new account.
+```
+  1. You:  start FANTASIAN and load any save belonging to THIS account.
+  2. Tool: move this account's saves aside, put the old account's saves in.
+  3. You:  in game, Esc to the menu, Load, pick your save, load it.
+  4. Tool: take the old saves out, put this account's saves back.
+  5. You:  in game, reach a save point and save. That is the write that counts.
+```
 
-`--dry-run` shows what it would do. `--into FOLDER` writes somewhere other than this Mac's
-own save. The whole folder is backed up before anything is written.
+Step 3 gets your progress into the running game's memory. Step 4 puts the account's own
+database back underneath it. Step 5 makes the game write that progress out through Core
+Data, which finally gives iCloud something it recognises and will upload.
+
+The account you are moving *to* needs a save of its own first, because the game has to be
+running and loaded into one for this to work. Sign in as that account, start FANTASIAN,
+play until it saves once, then come back.
+
+`--dry-run` prints the plan and touches nothing. `--into FOLDER` works on somewhere other
+than this Mac's own save. The whole folder is copied aside before anything moves, and the
+path to that copy is printed at every stage.
+
+This procedure is Rob Adams Jr's, worked out by hand before it was scripted.
 
 ## Move a save to Neo Dimension on Steam
 
@@ -144,11 +166,10 @@ Four things this is careful about:
 has a write-ahead log folds that log back into the main file and rewrites both. On a live
 game save that is a real edit to your files. Reads happen against a copy.
 
-**It changes only what it was asked to change.** An account transfer touches one column of
-one row; of the twenty-five tables in a real save database, twenty-four come through
-byte-identical, and the row keeps its own key, UUID and device name. Editing one slot
-leaves the others alone, and an untouched Apple Arcade save rebuilds byte for byte,
-records in the order the game itself wrote them.
+**It changes only what it was asked to change.** Editing one save leaves the others alone,
+and an untouched Apple Arcade save rebuilds byte for byte, records in the order the game
+itself wrote them. Through an account transfer, the account's own save files are moved
+aside whole and put back byte for byte.
 
 **It orders the Neo Dimension file the way that game's save editor expects.** That editor
 addresses saves by position rather than by name, so a file in a different order gets the
@@ -156,9 +177,9 @@ wrong save edited: on a wrongly ordered file, asking it for the second save reac
 one-hour save from years earlier instead. Apple Arcade payloads are left in the game's own
 order, which is not the same one.
 
-**It checks its own work.** Every record written is decrypted again and re-parsed first,
-and an account transfer reads the result back and compares it against the source before it
-says it worked.
+**It checks its own work.** Every record written is decrypted again and re-parsed before
+the file is saved, and each stage of an account transfer reads the folder back and shows
+you what the game will now find there.
 
 There is one thing it cannot fix, so it warns instead: an Apple Arcade save with no
 `GameData10` in it. The game handles that fine, but the Neo Dimension save editor expects
@@ -202,10 +223,9 @@ Neo Dimension is a remaster. The save schema matches, but individual map, flag a
 IDs are not guaranteed identical across both releases. The Steam transfer is confirmed
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
-The account transfer is verified down to the database: the right save goes in, the account
-metadata comes through untouched, and it reads back matching the source. Whether the game
-then binds it to the new account on your machine is the part only you can see, which is
-why it backs the whole folder up first and tells you where the backup went.
+The account transfer does file moving, and that part is verified: the right saves are in
+place at each stage, and the account's own files come back byte for byte. The game steps
+are yours, and the procedure they follow is one that has worked by hand.
 
 Back up, and look at the slot in-game before you put another sixty hours on top of it.
 

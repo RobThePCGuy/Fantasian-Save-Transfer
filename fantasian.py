@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "2.0.1"
+__version__ = "3.0.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -934,72 +934,233 @@ def warn_missing_autosave(records):
               "name with --slot rather than trusting its numbering.")
 
 
+STEP = "\n" + "-" * 72 + "\n"
+
+
+def _materialise(path):
+    """Get the source save as real files on disk, plus a cleanup callback.
+
+    The swap needs the .sqlite together with its -wal and -shm, because the
+    current progress lives in the -wal. A zip is unpacked to do that.
+    """
+    if os.path.isdir(path):
+        if not arcade_db_in(path):
+            raise SaveError(f"no SaveDataEntity.sqlite inside the folder {path}")
+        return path, lambda: None
+    if path.lower().endswith(".zip"):
+        tmp = tempfile.mkdtemp(prefix="fantasian_src_")
+        with zipfile.ZipFile(path) as z:
+            names = [n for n in z.namelist()
+                     if os.path.basename(n).startswith("SaveDataEntity.sqlite")
+                     and not os.path.basename(n).startswith("._")]
+            if not names:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise SaveError(f"no SaveDataEntity.sqlite inside {path}")
+            for n in names:
+                with open(os.path.join(tmp, os.path.basename(n)), "wb") as f:
+                    f.write(z.read(n))
+        return tmp, lambda: shutil.rmtree(tmp, ignore_errors=True)
+    folder = os.path.dirname(os.path.abspath(path))
+    if not arcade_db_in(folder):
+        raise SaveError(f"no SaveDataEntity.sqlite next to {path}")
+    return folder, lambda: None
+
+
+def _save_files(folder):
+    return [os.path.join(folder, "SaveDataEntity.sqlite" + s)
+            for s in ("", "-wal", "-shm")
+            if os.path.exists(os.path.join(folder, "SaveDataEntity.sqlite" + s))]
+
+
+def move_saves_out(folder, keep_dir):
+    """Take the save files out of the folder and put them somewhere safe."""
+    os.makedirs(keep_dir, exist_ok=True)
+    moved = []
+    for path in _save_files(folder):
+        shutil.move(path, os.path.join(keep_dir, os.path.basename(path)))
+        moved.append(os.path.basename(path))
+    return moved
+
+
+def copy_saves_in(src_folder, folder):
+    copied = []
+    for path in _save_files(src_folder):
+        shutil.copy2(path, os.path.join(folder, os.path.basename(path)))
+        copied.append(os.path.basename(path))
+    return copied
+
+
+def delete_saves(folder):
+    removed = []
+    for path in _save_files(folder):
+        os.remove(path)
+        removed.append(os.path.basename(path))
+    return removed
+
+
+def move_saves_back(keep_dir, folder):
+    moved = []
+    for path in _save_files(keep_dir):
+        shutil.move(path, os.path.join(folder, os.path.basename(path)))
+        moved.append(os.path.basename(path))
+    return moved
+
+
+def game_is_running():
+    try:
+        import subprocess
+        out = subprocess.run(["pgrep", "-i", "-f", "fantasian"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return out.returncode == 0
+    except Exception:
+        return None      # could not tell
+
+
+def _wait(prompt):
+    try:
+        input(prompt)
+    except EOFError:
+        raise SaveError("this needs someone at the keyboard, it cannot be piped")
+    return True
+
+
 def cmd_to_account(args):
-    """Carry a save into the Apple Arcade account signed in on this Mac."""
+    """Walk a save from one Apple Arcade account into another.
+
+    Why this is a guided procedure rather than something the tool just does:
+
+    FANTASIAN stores its save through Core Data with CloudKit mirroring. Core
+    Data notices a change by writing rows into its persistent history tables,
+    ATRANSACTION and ACHANGE, and CloudKit only ever pushes up what it finds
+    there. Anything written into the database from outside the game leaves no
+    history, so iCloud never learns it happened, never uploads it, and on the
+    next launch imports the server's own copy straight over the top. That is
+    why copying a save folder between accounts appears to work and is then
+    undone a moment later.
+
+    The only write that survives is one the game itself makes. So the file
+    juggling here exists to put the old save in front of a running game long
+    enough for it to be loaded, after which the game's own save writes it back
+    out under the account that is signed in.
+
+    The procedure is Rob Adams Jr's, worked out by hand before it was scripted.
+    """
     if not args.source:
         raise SaveError(
-            "give me the FANTASIAN folder or zip from the OLD account.\n"
-            "It is the save you want to keep, copied off the Mac or the account that "
-            "has it.")
+            "give me the FANTASIAN folder or zip from the account whose progress you "
+            "want to keep.")
+
     source = load_save(args.source)
-    if source.origin != "arcade" or source.raw_blob is None:
+    if source.origin != "arcade":
         raise SaveError(
-            f"{args.source} is not an Apple Arcade save. This command moves a save "
-            "between Apple Arcade accounts. To go to Steam, use the to-steam command.")
+            f"{args.source} is not an Apple Arcade save. This moves a save between "
+            "Apple Arcade accounts. To go to Steam, use to-steam.")
 
     target_folder = args.into or ARCADE_SAVE_DIR
-    target_db = arcade_db_in(target_folder)
-    if not target_db:
+    if not arcade_db_in(target_folder):
         raise SaveError(
             f"no FANTASIAN save in {target_folder}\n\n"
-            "This writes into the save the NEW account already has, so that account "
-            "needs one first. Sign in as the new account, start FANTASIAN, play until "
-            "it saves once, quit, and run this again.")
+            "The account you are moving TO needs its own save first, because the game "
+            "has to be running and loaded into one of its saves for this to work.\n"
+            "Sign in as that account, start FANTASIAN, play until it saves once, then "
+            "come back.")
 
-    print(f"\nCarrying over from {args.source}:\n")
-    show(source.records)
+    src_folder, cleanup = _materialise(args.source)
+    try:
+        target = load_save(target_folder)
+        print(f"\nThe save you want to keep, from {args.source}:\n")
+        show(source.records)
+        print(f"\nThe account signed in on this Mac ({target_folder}):\n")
+        show(target.records)
 
-    target = load_save(target_folder)
-    print(f"\nThe account on this Mac currently has ({target_folder}):\n")
-    show(target.records)
+        print(STEP.rstrip())
+        print("""
+What is about to happen, and why it is done this way:
 
-    rows = write_into_arcade_db(target_db, source.raw_blob, dry_run=True)
-    print(f"\n{len(rows)} save row(s) in the target database would be replaced.")
+FANTASIAN saves through Core Data with iCloud mirroring. iCloud only uploads
+changes the game itself made, and on launch it pulls its own copy down over
+anything else. So a save written into these files from outside is thrown away
+the next time you start the game, which is what makes copying the folder
+between accounts look like it worked and then undo itself.
 
-    if args.dry_run:
-        print("\nDry run, nothing was written.")
+The only write that sticks is one the game makes. So the old save gets put in
+front of the running game, you load it, and then the game's own save writes it
+back out under the account signed in here.
+
+Five steps. This tool does the file moving, you do the game.
+
+  1. You:  start FANTASIAN and load any save belonging to THIS account.
+  2. Tool: move this account's saves aside, put the old account's saves in.
+  3. You:  in game, Esc to the menu, Load, pick your save, load it.
+  4. Tool: take the old saves out, put this account's saves back.
+  5. You:  in game, reach a save point and save. That is the write that counts.
+
+Then quit, start the game again, and the save is yours on this account.""")
+
+        if args.dry_run:
+            print(f"\n{STEP}Dry run. Nothing was moved.")
+            return 0
+
+        backup = backup_folder(target_folder)
+        print(f"{STEP}First, a copy of this account's save folder as it stands:\n"
+              f"  {backup}\n\n"
+              "If anything goes wrong at any point, quit the game and copy that folder\n"
+              f"back over\n  {target_folder}")
+
+        running = game_is_running()
+        print(STEP + "STEP 1. Start FANTASIAN and load any save that belongs to the\n"
+              "account signed in on this Mac. Leave the game running.")
+        if running is False:
+            print("\n(The game does not look like it is running yet.)")
+        _wait("\n  Loaded into a save, game still open? Press return. ")
+
+        keep_dir = os.path.join(os.path.dirname(backup.rstrip(os.sep)),
+                                os.path.basename(backup) + ".in-use")
+        print(STEP + "STEP 2. Swapping the saves.")
+        moved = move_saves_out(target_folder, keep_dir)
+        print(f"  moved out: {', '.join(moved)}")
+        copied = copy_saves_in(src_folder, target_folder)
+        print(f"  copied in: {', '.join(copied)}")
+        swapped = load_save(target_folder)
+        print("\n  The game will now offer:\n")
+        show(swapped.records, indent="    ")
+
+        print(STEP + "STEP 3. In the game: Esc, back to the menu, Load. The saves above\n"
+              "are the ones you should see. Load the one you want to keep, and let it\n"
+              "finish loading into the world.")
+        _wait("\n  Loaded into the save you want? Press return. ")
+
+        print(STEP + "STEP 4. Putting this account's own saves back.")
+        removed = delete_saves(target_folder)
+        print(f"  removed: {', '.join(removed)}")
+        restored = move_saves_back(keep_dir, target_folder)
+        print(f"  restored: {', '.join(restored)}")
+        try:
+            os.rmdir(keep_dir)
+        except OSError:
+            pass
+        back = load_save(target_folder)
+        print("\n  This account's own save is back on disk:\n")
+        show(back.records, indent="    ")
+        print("\n  Your progress is still loaded in the running game. That is the point.")
+
+        print(STEP + "STEP 5. In the game: walk to a save point and save, through the\n"
+              "game's own menu. That save is the one iCloud uploads, and it is what\n"
+              "makes the progress yours on this account.")
+        _wait("\n  Saved in game? Press return. ")
+
+        final = load_save(target_folder)
+        print(f"{STEP}What is on disk now:\n")
+        show(final.records, indent="  ")
+        print("""
+Quit the game and start it again. If your progress is there, it is bound to
+this account and iCloud will carry it to your other devices.
+
+If it is not, nothing is lost. Quit the game and copy""")
+        print(f"  {backup}\nback over\n  {target_folder}")
         return 0
-
-    backup = backup_folder(target_folder)
-    print(f"\nBacked up the whole folder to\n  {backup}")
-
-    write_into_arcade_db(target_db, source.raw_blob)
-
-    check = load_save(target_folder)
-    written = {r["path"]: record_plaintext(r) for r in check.records}
-    expected = {r["path"]: record_plaintext(r) for r in source.records}
-    if written != expected:
-        raise SaveError(
-            "the save did not read back as expected. Nothing is lost: copy\n"
-            f"  {backup}\nback over\n  {target_folder}\nto put it as it was.")
-
-    print(f"\nDone. {len(check)} slot(s) now in this account's save:\n")
-    show(check.records)
-    print("""
-Only the save itself was replaced. The sync metadata that ties this database to
-the account signed in on this Mac was left alone, which is the part a wholesale
-folder copy gets wrong: iCloud sees a database belonging to somebody else and
-replaces it with its own copy.
-
-Now bind it to the account:
-
-  1. Start FANTASIAN and load one of the slots above.
-  2. Save through the game's own menu.
-
-That save is what pushes your progress up under the new account. Until you do
-it, the file is only local.""")
-    print(f"\nIf anything looks wrong, copy\n  {backup}\nback over\n  {target_folder}")
-    return 0
+    finally:
+        cleanup()
 
 
 def cmd_edit(args):
@@ -1083,8 +1244,17 @@ def cmd_edit(args):
         else:
             print(f"\nBacked up the whole folder to\n  {backup_folder(folder)}")
             write_into_arcade_db(db, arcade_blob(save.records))
-            print(f"\nWrote the edit into {db}. Close the game first if it is open, "
-                  "then start it and check the slot.")
+            print(f"\nWrote the edit into {db}.")
+            print("""
+Be aware of what iCloud does with this. FANTASIAN saves through Core Data with
+iCloud mirroring, and iCloud only uploads changes the game itself made. An edit
+written from out here leaves no trace it can see, so on the next launch it can
+pull its own copy back down over the top and the edit is gone.
+
+If it does not stick, the way through is the same one to-account uses: with the
+game already running and loaded, swap this edited save in, load it from the
+game's menu, swap the originals back, and save in game. That save is the one
+iCloud uploads.""")
     return 0
 
 
@@ -1169,12 +1339,13 @@ def build_parser():
 
     a = sub.add_parser(
         "to-account",
-        help="carry a save into the Apple Arcade account signed in on this Mac",
-        description="Put a save from one Apple Arcade account into another.\n\n"
-                    "Only the save itself is replaced. The sync metadata tying the "
-                    "database to the account on this Mac is left alone, which is the "
-                    "part a wholesale folder copy gets wrong: iCloud sees a database "
-                    "belonging to somebody else and replaces it with its own copy.",
+        help="walk a save into the Apple Arcade account signed in on this Mac",
+        description="Move a save from one Apple Arcade account to another.\n\n"
+                    "This is a guided procedure, not something the tool can do on its\n"
+                    "own. iCloud only uploads changes the game itself made, and on\n"
+                    "launch it pulls its own copy down over anything else, so a save\n"
+                    "written into the files from outside is discarded. The tool moves\n"
+                    "the files at the right moments while you drive the game.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument("source", nargs="?",
                    help="the FANTASIAN folder or zip from the OLD account")
