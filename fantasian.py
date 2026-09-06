@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
