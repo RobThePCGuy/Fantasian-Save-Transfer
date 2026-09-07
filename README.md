@@ -126,6 +126,30 @@ unlocked skill points or started act 2.
 
 Run `python3 fantasian.py edit --help` for the full list.
 
+## Getting the save out of another account on the same Mac
+
+If the account you are moving *from* is a second macOS user on this machine, you cannot
+read its save from your own login. macOS denies it outright:
+
+```
+$ ls /Users/otheruser/Library
+ls: /Users/otheruser/Library: Permission denied
+```
+
+**Do not reach for sudo.** A tool that moves game saves has no business asking for an
+administrator password, and on current macOS elevation alone often still will not get you
+into another user's Library. The route that needs no permissions at all:
+
+1. Log in as that other user.
+2. Copy their `FANTASIAN` folder (the path below) into `/Users/Shared`.
+3. Log back into your own account and point this tool at it.
+
+`/Users/Shared` is world-writable for exactly this, so the copy needs nothing special at
+either end. A USB stick or an AirDrop to yourself works the same way.
+
+The tool takes a folder or a zip from anywhere, so once the files are somewhere you can
+read, nothing else changes.
+
 ## If you did not play on a Mac
 
 The save sits inside the app's container, and this needs the whole folder:
