@@ -453,7 +453,9 @@ class ToAccount(Base):
 
     def drive(self, argv, at_each_prompt=None):
         """Run the guided flow, answering every prompt, optionally looking at
-        the folder each time it pauses."""
+        the folder each time it pauses. Adds --anyway, because the command
+        refuses on its own: it crashes the game on 2.5.3."""
+        argv = list(argv) + ["--anyway"]
         seen = []
 
         def fake_wait(prompt):
@@ -542,19 +544,36 @@ class ToAccount(Base):
         empty = os.path.join(self.tmp, "empty")
         os.makedirs(empty)
         with self.assertRaises(ft.SaveError) as caught:
-            run(["to-account", self.old, "--into", empty])
+            run(["to-account", self.old, "--into", empty, "--anyway"])
         self.assertIn("saves once", str(caught.exception))
 
     def test_refuses_a_steam_source(self):
         steam = os.path.join(self.tmp, "root.json")
         run(["to-steam", self.old, "-o", steam])
         with self.assertRaises(ft.SaveError) as caught:
-            run(["to-account", steam, "--into", self.new])
+            run(["to-account", steam, "--into", self.new, "--anyway"])
         self.assertIn("to-steam", str(caught.exception))
+
+    def test_it_refuses_by_default(self):
+        """It crashes the game on 2.5.3, so it does not run unless asked twice."""
+        with self.assertRaises(ft.SaveError) as caught:
+            run(["to-account", self.old, "--into", self.new])
+        message = str(caught.exception)
+        self.assertIn("2.5.3", message)
+        self.assertIn("saveContext", message)
+        self.assertIn("--anyway", message)
+        self.assertEqual(self.digest(self.new), self.digest(self.new))
+        self.assertFalse([d for d in os.listdir(self.tmp) if ".backup_" in d])
+
+    def test_dry_run_does_not_need_anyway(self):
+        """Reading the plan should not require agreeing to break something."""
+        before = self.digest(self.new)
+        run(["to-account", self.old, "--into", self.new, "--dry-run"])
+        self.assertEqual(before, self.digest(self.new))
 
     def test_needs_a_source(self):
         with self.assertRaises(ft.SaveError):
-            run(["to-account", "--into", self.new])
+            run(["to-account", "--into", self.new, "--anyway"])
 
     def test_it_will_not_run_with_nobody_at_the_keyboard(self):
         """Every step needs a person driving the game, so a run with nothing on

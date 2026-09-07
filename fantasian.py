@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.3.0"
+__version__ = "3.4.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -946,6 +946,45 @@ def warn_missing_autosave(records):
 
 STEP = "\n" + "-" * 72 + "\n"
 
+KNOWN_BROKEN = """This does not work on FANTASIAN 2.5.3, and running it will crash the game.
+
+It was tried twice on that build, once with the game sitting at the main menu
+and once with it already loaded into one of the destination account's own
+saves. Both died at the moment of saving, in the same place:
+
+    SaveDataManager_SaveGameData
+     -> GameDataContainer_Save
+      -> CloudSaveDataStream_Save
+       -> CoreDataService.writeRecord
+        -> NSManagedObjectContext performBlockAndWait
+         -> GameDataEntityController.saveContext(author:)   EXC_BAD_INSTRUCTION
+
+Core Data's save throws once its store has been moved out from under it, and
+the game force-tries that save, so the process dies. Loading works: the game
+re-reads the save files whenever the Load screen opens, and the other account's
+saves appear correctly. It is only the write that cannot survive the swap.
+
+Nothing was damaged either time. The save came through both crashes intact and
+passing an integrity check, which is why this refuses rather than warns: the
+cost is your time and a crashed game, and there is nothing at the end of it.
+
+The other route, writing a save into the database directly with no game
+involved, does not work either. FANTASIAN mirrors its save to iCloud through
+Core Data, and iCloud only uploads changes recorded in Core Data's own history
+tables. A write from outside leaves no history, so it is never uploaded, and
+the next launch pulls the server's copy back over the top.
+
+If you have made this work, on this build or another one, the exact sequence
+would be worth having:
+  https://github.com/RobThePCGuy/Fantasian-Save-Transfer/issues
+
+Pass --anyway to run it regardless, for example on a different version. Your
+save folder is copied aside first either way. --dry-run prints the plan and
+touches nothing."""
+
+
+
+
 
 def _materialise(path):
     """Get the source save as real files on disk, plus a cleanup callback.
@@ -1059,6 +1098,9 @@ def cmd_to_account(args):
         raise SaveError(
             "give me the FANTASIAN folder or zip from the account whose progress you "
             "want to keep.")
+
+    if not args.anyway and not args.dry_run:
+        raise SaveError(KNOWN_BROKEN)
 
     source = load_save(args.source)
     if source.origin != "arcade":
@@ -1382,7 +1424,7 @@ def build_parser():
 
     a = sub.add_parser(
         "to-account",
-        help="walk a save into the Apple Arcade account signed in on this Mac",
+        help="move a save between Apple Arcade accounts (does not work on 2.5.3)",
         description="Move a save from one Apple Arcade account to another.\n\n"
                     "This is a guided procedure, not something the tool can do on its\n"
                     "own. iCloud only uploads changes the game itself made, and on\n"
@@ -1396,6 +1438,8 @@ def build_parser():
                    help=f"the save folder to write into (default: {ARCADE_SAVE_DIR})")
     a.add_argument("--dry-run", action="store_true",
                    help="say what would happen and write nothing")
+    a.add_argument("--anyway", action="store_true",
+                   help="run it even though it crashes the game on 2.5.3")
     a.set_defaults(func=cmd_to_account)
 
     e = sub.add_parser("edit", help="change a save: money, items, experience")
