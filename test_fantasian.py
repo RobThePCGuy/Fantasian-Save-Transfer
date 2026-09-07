@@ -429,6 +429,129 @@ class ToSteam(Base):
         self.assertEqual(self.steam_records(self.out), self.steam_records(again))
 
 
+class AccountDiscovery(Base):
+    """Finding the other macOS account, and reading its save out.
+
+    The states matter more than they look. Saying "no save there" when the truth
+    is "I was not allowed to look" tells someone their other account is empty.
+    """
+
+    def test_probe_says_absent_when_the_folder_is_not_there(self):
+        self.assertEqual(ft._container_probe(os.path.join(self.tmp, "nope")), "absent")
+
+    def test_probe_says_present_for_a_real_save(self):
+        self.assertEqual(ft._container_probe(self.arcade("HERE")), "present")
+
+    def test_probe_says_absent_for_an_empty_folder(self):
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        self.assertEqual(ft._container_probe(empty), "absent")
+
+    def test_probe_tells_denied_apart_from_absent(self):
+        """os.path.isdir answers False for both, and they mean opposite things."""
+        if os.geteuid() == 0:
+            self.skipTest("root can read anything, so nothing is ever denied")
+        locked = os.path.join(self.tmp, "locked")
+        inside = os.path.join(locked, "FANTASIAN")
+        os.makedirs(inside)
+        os.chmod(locked, 0o000)
+        try:
+            self.assertEqual(ft._container_probe(inside), "denied")
+        finally:
+            os.chmod(locked, 0o700)
+
+    def test_discover_returns_known_states(self):
+        for user, folder, state in ft.discover_accounts():
+            self.assertIn(state, ("readable", "needs_sudo", "unknown"))
+            self.assertTrue(folder.endswith("FANTASIAN"))
+
+    def test_staging_takes_the_wal_with_it(self):
+        src = self.arcade("SRC", keep_rows_in_wal=True)
+        dst = os.path.join(self.tmp, "staged")
+        ft.stage_saves(src, dst)
+        self.assertTrue(os.path.exists(os.path.join(dst, "SaveDataEntity.sqlite")))
+        self.assertTrue(os.path.exists(os.path.join(dst, "SaveDataEntity.sqlite-wal")))
+        self.assertEqual(len(ft.load_save(dst)), len(ft.load_save(src)))
+
+    def test_staging_refuses_a_copy_with_no_wal(self):
+        """A .sqlite on its own is nearly empty: the progress is in the -wal."""
+        src = self.arcade("SRC", keep_rows_in_wal=True)
+        thin = os.path.join(self.tmp, "thin")
+        os.makedirs(thin)
+        shutil.copy2(os.path.join(src, "SaveDataEntity.sqlite"), thin)
+        with self.assertRaises(ft.SaveError) as caught:
+            ft.stage_saves(thin, os.path.join(self.tmp, "staged2"))
+        self.assertIn("-wal", str(caught.exception))
+
+
+class TransferSteps(Base):
+    """The generator a GUI drives. It must describe the work without printing
+    or prompting, so the same procedure can drive a window or a terminal."""
+
+    def setUp(self):
+        super().setUp()
+        self.old = self.arcade("OLD", keep_rows_in_wal=True)
+        self.new = self.arcade("NEW", slots={
+            "Data/GameData0.json": make_slot(60, 100, "Prologue", "2026/09/01 00:00:00"),
+        })
+        self.real_running = ft.game_is_running
+        ft.game_is_running = lambda: True
+
+    def tearDown(self):
+        ft.game_is_running = self.real_running
+        super().tearDown()
+
+    def walk(self):
+        return list(ft.account_transfer(self.old, self.new))
+
+    def test_the_steps_come_in_the_order_the_procedure_needs(self):
+        self.assertEqual([s.key for s in self.walk()],
+                         ["plan", "backup", "game-open", "swap-in",
+                          "load", "swap-back", "save", "done"])
+
+    def test_exactly_three_steps_belong_to_the_person(self):
+        waits = [s.key for s in self.walk() if s.waits]
+        self.assertEqual(waits, ["game-open", "load", "save"])
+
+    def test_it_says_nothing_on_its_own(self):
+        """A GUI supplies the words. Anything printed here would land in a
+        terminal nobody is looking at."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.walk()
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_the_old_saves_are_on_disk_when_the_person_is_asked_to_load(self):
+        for step in ft.account_transfer(self.old, self.new):
+            if step.key == "load":
+                got = sorted(ft.slot_number(r["path"])
+                             for r in ft.load_save(self.new).records)
+                self.assertEqual(got, ["0", "1", "10", "2"])
+
+    def test_the_account_owns_its_database_again_before_the_save(self):
+        for step in ft.account_transfer(self.old, self.new):
+            if step.key == "save":
+                got = sorted(ft.slot_number(r["path"])
+                             for r in ft.load_save(self.new).records)
+                self.assertEqual(got, ["0"])
+
+    def test_a_swap_gives_the_files_new_inodes(self):
+        """Finder's Replace All, not a write over the top. Keeping the inode
+        leaves the game's -shm mapping stale and it stops seeing any saves."""
+        before = os.stat(os.path.join(self.new, "SaveDataEntity.sqlite-wal")).st_ino
+        for step in ft.account_transfer(self.old, self.new):
+            if step.key == "swap-in":
+                after = os.stat(os.path.join(self.new,
+                                             "SaveDataEntity.sqlite-wal")).st_ino
+                self.assertNotEqual(before, after)
+                break
+
+    def test_it_stops_when_the_game_goes_away(self):
+        ft.game_is_running = lambda: False
+        with self.assertRaises(ft.SaveError):
+            self.walk()
+
+
 class ToAccount(Base):
     """The transfer is a guided procedure: the tool moves files, the player
     drives the game. What is worth testing is the file state at each point, and
@@ -451,11 +574,13 @@ class ToAccount(Base):
                     out[name] = hashlib.sha256(f.read()).hexdigest()
         return out
 
-    def drive(self, argv, at_each_prompt=None):
+    def drive(self, argv, at_each_prompt=None, running=True):
         """Run the guided flow, answering every prompt, optionally looking at
-        the folder each time it pauses. Adds --anyway, because the command
-        refuses on its own: it crashes the game on 2.5.3."""
-        argv = list(argv) + ["--anyway"]
+        the folder each time it pauses.
+
+        game_is_running is stubbed because the flow refuses to carry on once the
+        game has gone: the loaded progress lives only in that process.
+        """
         seen = []
 
         def fake_wait(prompt):
@@ -464,12 +589,13 @@ class ToAccount(Base):
                 at_each_prompt(len(seen))
             return True
 
-        real = ft._wait
+        real_wait, real_running = ft._wait, ft.game_is_running
         ft._wait = fake_wait
+        ft.game_is_running = lambda: running
         try:
-            run(argv)
+            run(list(argv))
         finally:
-            ft._wait = real
+            ft._wait, ft.game_is_running = real_wait, real_running
         return seen
 
     def test_the_accounts_own_save_comes_back_untouched(self):
@@ -540,36 +666,32 @@ class ToAccount(Base):
         empty = os.path.join(self.tmp, "empty")
         os.makedirs(empty)
         with self.assertRaises(ft.SaveError) as caught:
-            run(["to-account", self.old, "--into", empty, "--anyway"])
-        self.assertIn("saves once", str(caught.exception))
+            run(["to-account", self.old, "--into", empty])
+        self.assertIn("needs a save of its own", str(caught.exception))
 
     def test_refuses_a_steam_source(self):
         steam = os.path.join(self.tmp, "root.json")
         run(["to-steam", self.old, "-o", steam])
         with self.assertRaises(ft.SaveError) as caught:
-            run(["to-account", steam, "--into", self.new, "--anyway"])
+            run(["to-account", steam, "--into", self.new])
         self.assertIn("to-steam", str(caught.exception))
 
-    def test_it_refuses_by_default(self):
-        """It crashes the game on 2.5.3, so it does not run unless asked twice."""
-        with self.assertRaises(ft.SaveError) as caught:
-            run(["to-account", self.old, "--into", self.new])
-        message = str(caught.exception)
-        self.assertIn("2.5.3", message)
-        self.assertIn("saveContext", message)
-        self.assertIn("--anyway", message)
-        self.assertEqual(self.digest(self.new), self.digest(self.new))
-        self.assertFalse([d for d in os.listdir(self.tmp) if ".backup_" in d])
+    def test_it_runs_without_being_asked_twice(self):
+        """It used to refuse outright, on the strength of two crashed attempts.
+        The sequence was then watched through on 2.5.3, so the refusal is gone."""
+        self.assertEqual(len(self.drive(["to-account", self.old, "--into", self.new])), 3)
 
-    def test_dry_run_does_not_need_anyway(self):
-        """Reading the plan should not require agreeing to break something."""
-        before = self.digest(self.new)
-        run(["to-account", self.old, "--into", self.new, "--dry-run"])
-        self.assertEqual(before, self.digest(self.new))
+    def test_it_stops_if_the_game_has_gone(self):
+        """The loaded progress lives only in the running game. If that process
+        is gone there is nothing left to save, and carrying on would write the
+        wrong save into the account."""
+        with self.assertRaises(ft.SaveError) as caught:
+            self.drive(["to-account", self.old, "--into", self.new], running=False)
+        self.assertIn("not running", str(caught.exception))
 
     def test_needs_a_source(self):
         with self.assertRaises(ft.SaveError):
-            run(["to-account", "--into", self.new, "--anyway"])
+            run(["to-account", "--into", self.new])
 
     def test_it_will_not_run_with_nobody_at_the_keyboard(self):
         """Every step needs a person driving the game, so a run with nothing on

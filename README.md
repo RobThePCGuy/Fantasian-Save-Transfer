@@ -24,24 +24,44 @@ time, macOS refuses to run a file you downloaded: right-click it, pick **Open**,
 
 Everything below is the same thing from the command line.
 
-## Moving a save to another Apple Arcade account: this does not work
+## Moving a save to another Apple Arcade account
 
-Two ways in, both closed. Written up here because the write-up is the useful part.
+This one is a guided procedure. The tool moves the files; you drive the game.
 
-**Writing the save into the database directly does not survive.** FANTASIAN mirrors its
-save to iCloud through Core Data, and Core Data records a change by writing rows into its
-own history tables, `ATRANSACTION` and `ACHANGE`. iCloud only ever uploads what it finds
-there. A write from outside the game leaves no history, so iCloud never learns it happened,
-never uploads it, and the next launch pulls the server's copy back over the top. Preserving
-the account's sync metadata makes this worse rather than better: an intact server change
-token is exactly what lets iCloud conclude it is already in sync and overwrite without
-hesitating.
+**Why it cannot just be done for you.** FANTASIAN mirrors its save to iCloud through Core
+Data, and Core Data records a change by writing rows into its own history tables,
+`ATRANSACTION` and `ACHANGE`. iCloud only ever uploads what it finds there. A write from
+outside the game leaves no history, so iCloud never learns it happened, never uploads it,
+and the next launch pulls the server's copy back over the top. Preserving the account's
+sync metadata makes this worse rather than better: an intact server change token is exactly
+what lets iCloud conclude it is already in sync and overwrite without hesitating.
 
-**Swapping the files under the running game crashes it.** The idea was to put the other
-account's saves in front of a running game, load one, put the originals back, and let the
-game's own save write that progress out under the right account. Loading works. The game
-re-reads the save files whenever the Load screen opens, and the other account's saves
-appear correctly, dates and play times and all. The save does not work:
+Watched happening, three times in a row: the other account's saves were confirmed in place
+on disk, and about thirty seconds later the running game had replaced them with the
+account's own again.
+
+**So the only write that counts is one the game itself makes.** The old account's saves go
+in front of a running game, you load one, the account's own database goes back underneath,
+and then you save in game. That save carries the loaded progress into the account signed
+in here, with the history iCloud needs.
+
+```bash
+python3 fantasian.py to-account --list-accounts          # who is on this Mac
+python3 fantasian.py to-account --from-user OTHERNAME    # read their save, transfer it
+python3 fantasian.py to-account /path/to/FANTASIAN       # or from a folder or zip
+python3 fantasian.py to-account --from-user OTHERNAME --dry-run
+```
+
+`--from-user` reads the other account's own game folder and asks for your password if that
+folder is not readable as you. Everything after that copy runs as you. Your save folder is
+copied aside before anything moves.
+
+**Two things that will bite you.** After the swap back the Load screen can show NO DATA or
+keep listing the old saves; that is a stale handle on a database that moved, and the tool
+reads the files back to prove they are fine. Do not quit when you see it, because quitting
+throws away the progress in memory, which is the whole point. Save first.
+
+And the game may crash at the save instead:
 
 ```
 SaveDataManager_SaveGameData
@@ -52,25 +72,14 @@ SaveDataManager_SaveGameData
      → GameDataEntityController.saveContext(author:)   EXC_BAD_INSTRUCTION
 ```
 
-Core Data's save throws once its store has been moved out from under it, and the game force
-tries that save, so the process dies. Tried twice on 2.5.3, once from the main menu and
-once with the game already loaded into one of the destination account's own saves, in case
-that mattered. Same crash both times.
+That happened on two earlier attempts on 2.5.3. It did not happen on the run this
+procedure is built from, and what was different is not known. Nothing was damaged any of
+those times: the database came back byte identical and passing an integrity check.
 
-Nothing was damaged either time. The save came through both crashes intact and passing an
-integrity check.
-
-The command is still there and still does the file moving, but it refuses to run unless you
-pass `--anyway`, because on this build there is nothing at the end of it. `--dry-run` prints
-the plan and touches nothing. Your save folder is copied aside before anything moves.
-
-```bash
-python3 fantasian.py to-account /path/to/old/FANTASIAN --dry-run
-```
-
-**If you have made this work, the exact sequence is worth having.** Open an issue. A
-different game version is the most likely explanation, and this refusal should then be
-narrowed to the versions it applies to.
+**"Confirm Save Data".** On a later launch the game may say your progress on this device
+and on iCloud differ, and offer a card for each with a timestamp, a Checkpoints level and a
+slot count. Both cards carry the device name, so both can read the same; the level and slot
+count are what tell them apart. Whichever you pick wins.
 
 ## Move a save to Neo Dimension on Steam
 
@@ -259,10 +268,12 @@ Neo Dimension is a remaster. The save schema matches, but individual map, flag a
 IDs are not guaranteed identical across both releases. The Steam transfer is confirmed
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
-The account transfer does not work on 2.5.3 and says so rather than trying. What is
-verified there is that it never costs you the save: through two crashes the database came
-back byte identical and passing an integrity check, and the folder is copied aside before
-anything moves.
+The account transfer has been carried through on 2.5.3, once, watched at the filesystem
+the whole way. Two earlier attempts on that build crashed the game instead, and what was
+different is not known, so treat it as a procedure with a helper attached rather than a
+solved problem. What is verified either way is that it never costs you the save: through
+both crashes the database came back byte identical and passing an integrity check, and the
+folder is copied aside before anything moves.
 
 Back up, and look at the slot in-game before you put another sixty hours on top of it.
 
