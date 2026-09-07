@@ -47,7 +47,7 @@ python3 fantasian.py to-account /path/to/old/FANTASIAN
 ```
 
 ```
-  1. You:  start FANTASIAN and sit at the main menu.
+  1. You:  start FANTASIAN and load one of THIS account's own saves.
   2. Tool: move this account's saves aside, put the old account's saves in.
   3. You:  open Load. The old saves are listed. Load the one you want.
   4. Tool: take the old saves out, put this account's saves back.
@@ -58,10 +58,13 @@ Step 3 gets your progress into the running game's memory. Step 4 puts the accoun
 database back underneath it. Step 5 makes the game write that progress out through Core
 Data, which finally gives iCloud something it recognises and will upload.
 
-The main menu is enough at step 1. The game reads the save files each time the Load screen
-opens, so swapped-in saves appear without it having loaded anything first. This was checked
-by watching the game do it: with the files swapped, the Load screen listed the other
-account's Slot 1, Slot 2 and Slot 10 with their real dates and play times.
+**Step 1 is not optional.** Sitting at the main menu is enough to *see* the swapped saves at
+step 3, because the game re-reads the files whenever the Load screen opens. That much was
+watched: with another account's files in place, the Load screen listed its Slot 1, Slot 2
+and Slot 10 with their real dates and play times. It is not enough for step 5. Skipping
+step 1 was tried on version 2.5.3 and the game died at the save with an illegal instruction
+inside `NSManagedObjectContext.save()`, because the store it had open had been moved out
+from under it. Nothing was damaged. Nothing was saved either.
 
 **Expect the Load screen to look wrong after step 4.** Once your own files are back, it can
 show NO DATA or keep showing the old list. The game is holding a stale handle on a database
@@ -69,6 +72,13 @@ that moved underneath it, and it comes right the next time the game starts. Your
 fine, and the tool reads them back and shows you so. **Do not quit to fix it.** Quitting
 throws away the progress sitting in memory, which is the entire point of the exercise. Save
 first.
+
+**Save into an empty slot** at step 5 if you have one, so that whatever happens, the saves
+this account already had are untouched.
+
+**The game may crash at step 5 rather than saving.** It did in testing. The save on disk was
+not damaged, and the whole folder is copied aside before any of this begins, but you will
+have to start over.
 
 The account you are moving *to* needs a save of its own first, so there is a database to
 put back under the game at step 4. Sign in as that account, start FANTASIAN, play until it
@@ -268,11 +278,18 @@ IDs are not guaranteed identical across both releases. The Steam transfer is con
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
 The account transfer does file moving, and that part is verified: the right saves are in
-place at each stage, and the account's own files come back byte for byte. Steps 1 to 4 have
-also been watched end to end against the running game, on the macOS Apple Arcade build,
-with the other account's saves appearing in the Load screen and the original save restored
-byte for byte afterwards. Step 5, the in-game save, is the one nobody has watched through
-this tool, and it is the step the whole thing turns on.
+place at each stage, and the account's own files come back byte for byte. Steps 2, 3 and 4
+have been watched against a running game on the macOS Apple Arcade build 2.5.3, with the
+other account's saves appearing in the Load screen and the original restored byte for byte
+afterwards.
+
+**Step 5 has not been made to work through this tool.** Attempted with step 1 skipped, the
+game crashed on the save. The procedure written here, with step 1 done properly, is the one
+that worked by hand for the person who found it, and it is the reason step 1 is written the
+way it is. Until someone completes it start to finish, treat the account transfer as a
+documented procedure with a helper attached rather than as a solved problem. The save on
+disk was never at risk in any of this, and the tool copies the folder aside before it
+touches anything.
 
 Back up, and look at the slot in-game before you put another sixty hours on top of it.
 

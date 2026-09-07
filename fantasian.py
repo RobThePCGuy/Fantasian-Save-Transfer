@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -1099,22 +1099,30 @@ back out under the account signed in here.
 
 Five steps. This tool does the file moving, you do the game.
 
-  1. You:  start FANTASIAN and sit at the main menu.
+  1. You:  start FANTASIAN and load one of THIS account's own saves.
   2. Tool: move this account's saves aside, put the old account's saves in.
   3. You:  open Load. The old saves are listed. Load the one you want.
   4. Tool: take the old saves out, put this account's saves back.
   5. You:  in game, reach a save point and save. That is the write that counts.
 
-The main menu is enough at step 1. The game reads the save files each time you
-open the Load screen, so the swapped-in saves appear without the game having
-loaded anything first.
+Step 1 matters, and it is not optional. Being at the main menu is enough to
+SEE the swapped saves at step 3, because the game re-reads the files whenever
+the Load screen opens. It is not enough for step 5. Skipping step 1 and going
+from the main menu was tried on 2.5.3 and the game died at the save with an
+illegal instruction, inside NSManagedObjectContext.save(), because the store it
+had open was moved out from under it. Nothing was damaged, but nothing was
+saved either.
 
-One thing to expect at step 4, so it does not frighten you: once your own files
-are back, the game's Load screen can show NO DATA, or the old list. It is
-holding a stale handle on a database that moved underneath it. Your files are
-fine and this tool checks them. Do NOT quit to fix it. Quitting throws away the
-progress sitting in memory, which is the whole point of the exercise. Save
-first, at step 5. The list comes right the next time the game starts.""")
+Read this before you start, because it is the part that goes wrong:
+
+  * At step 4 the Load screen can show NO DATA, or keep showing the old list.
+    That is a stale handle on a database that moved. The files are fine and
+    this tool reads them back to prove it.
+  * Do NOT quit when you see that. Quitting throws away the progress in memory,
+    which is the whole point of the exercise. Save first.
+  * The game may crash at step 5 instead of saving. It did in testing. Your
+    save is not damaged when that happens, and this tool has already copied the
+    whole folder aside, but you will have to start over.""")
 
         if args.dry_run:
             print(f"\n{STEP}Dry run. Nothing was moved.")
@@ -1127,11 +1135,15 @@ first, at step 5. The list comes right the next time the game starts.""")
               f"back over\n  {target_folder}")
 
         running = game_is_running()
-        print(STEP + "STEP 1. Start FANTASIAN and leave it sitting at the main menu.\n"
-              "You do not need to load anything first.")
+        print(STEP + "STEP 1. Start FANTASIAN and load one of THIS account's own saves,\n"
+              "so the game is running inside the world.\n\n"
+              "Do not skip this by sitting at the main menu. It is enough to see the\n"
+              "swapped saves later, but the save at step 5 then dies with an illegal\n"
+              "instruction, because the game never had this account's database open for\n"
+              "writing.")
         if running is False:
             print("\n(The game does not look like it is running yet.)")
-        _wait("\n  Game open at the main menu? Press return. ")
+        _wait("\n  Loaded into one of this account's saves? Press return. ")
 
         keep_dir = os.path.join(os.path.dirname(backup.rstrip(os.sep)),
                                 os.path.basename(backup) + ".in-use")
@@ -1172,7 +1184,12 @@ first, at step 5. The list comes right the next time the game starts.""")
 
         print(STEP + "STEP 5. In the game: walk to a save point and save, through the\n"
               "game's own menu. That save is the one iCloud uploads, and it is what\n"
-              "makes the progress yours on this account.")
+              "makes the progress yours on this account.\n\n"
+              "Save into an EMPTY slot if you have one. Then whatever happens, the\n"
+              "saves this account already had are untouched.\n\n"
+              "If the game crashes here rather than saving, nothing is lost: your files\n"
+              "were copied aside before any of this started, and the path is printed\n"
+              "above. Start the game again and check.")
         _wait("\n  Saved in game? Press return. ")
 
         final = load_save(target_folder)
