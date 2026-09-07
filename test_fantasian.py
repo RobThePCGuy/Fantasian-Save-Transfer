@@ -508,15 +508,11 @@ class ToAccount(Base):
     def test_it_pauses_for_the_player_three_times(self):
         self.assertEqual(len(self.drive(["to-account", self.old, "--into", self.new])), 3)
 
-    def test_nothing_is_left_lying_around(self):
-        self.drive(["to-account", self.old, "--into", self.new])
-        leftovers = [d for d in os.listdir(self.tmp) if d.endswith(".in-use")]
-        self.assertEqual(leftovers, [])
-
     def test_a_backup_is_taken_first(self):
         self.drive(["to-account", self.old, "--into", self.new])
-        backups = [d for d in os.listdir(self.tmp) if d.startswith("NEW.backup_")]
-        self.assertEqual(len(backups), 1)
+        backups = [d for d in os.listdir(self.tmp)
+                   if d.startswith("NEW.backup_") and not d.endswith(".in-use")]
+        self.assertEqual(len(backups), 1, os.listdir(self.tmp))
         kept = ft.load_save(os.path.join(self.tmp, backups[0]))
         self.assertEqual(len(kept), 1)
 
@@ -599,33 +595,44 @@ class FileSwapping(Base):
     def test_the_wal_and_shm_travel_with_the_sqlite(self):
         """The current progress lives in the -wal, so a swap that carries only
         the .sqlite hands the game an empty database."""
-        keep = os.path.join(self.tmp, "keep")
-        moved = ft.move_saves_out(self.folder, keep)
-        self.assertIn("SaveDataEntity.sqlite-wal", moved)
-        self.assertEqual(self.names(self.folder), [])
-        self.assertIn("SaveDataEntity.sqlite-wal", self.names(keep))
+        removed, added = ft.replace_saves(self.other, self.folder)
+        self.assertIn("SaveDataEntity.sqlite-wal", removed)
+        self.assertIn("SaveDataEntity.sqlite-wal", added)
 
     def test_a_full_round_trip_restores_every_byte(self):
+        keep = os.path.join(self.tmp, "keep")
+        ft.copy_aside(self.folder, keep)
         before = {}
         for n in self.names(self.folder):
             with open(os.path.join(self.folder, n), "rb") as f:
                 before[n] = f.read()
-        keep = os.path.join(self.tmp, "keep")
-        ft.move_saves_out(self.folder, keep)
-        ft.copy_saves_in(self.other, self.folder)
-        ft.delete_saves(self.folder)
-        ft.move_saves_back(keep, self.folder)
+        ft.replace_saves(self.other, self.folder)
+        ft.replace_saves(keep, self.folder)
         after = {}
         for n in self.names(self.folder):
             with open(os.path.join(self.folder, n), "rb") as f:
                 after[n] = f.read()
         self.assertEqual(before, after)
 
-    def test_copying_in_replaces_what_the_game_will_read(self):
-        keep = os.path.join(self.tmp, "keep")
-        ft.move_saves_out(self.folder, keep)
-        ft.copy_saves_in(self.other, self.folder)
+    def test_replacing_changes_what_the_game_would_read(self):
+        ft.replace_saves(self.other, self.folder)
         self.assertEqual(len(ft.load_save(self.folder)), 4)
+
+    def test_replacing_gives_the_file_a_new_inode(self):
+        """This is the whole problem. A program holding the old file open is
+        left on an orphan, which is what kills the save afterwards."""
+        path = os.path.join(self.folder, "SaveDataEntity.sqlite")
+        before = os.stat(path).st_ino
+        ft.replace_saves(self.other, self.folder)
+        self.assertNotEqual(os.stat(path).st_ino, before)
+
+    def test_writing_over_the_top_keeps_the_inode(self):
+        """The other half of the trap. The handle stays valid, but SQLite has
+        the -shm mapped, so the game does not see the new saves either."""
+        path = os.path.join(self.folder, "SaveDataEntity.sqlite")
+        before = os.stat(path).st_ino
+        ft.copy_over(self.other, self.folder)
+        self.assertEqual(os.stat(path).st_ino, before)
 
 
 class Editing(Base):

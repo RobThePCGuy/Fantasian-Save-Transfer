@@ -34,7 +34,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -960,9 +960,16 @@ saves. Both died at the moment of saving, in the same place:
          -> GameDataEntityController.saveContext(author:)   EXC_BAD_INSTRUCTION
 
 Core Data's save throws once its store has been moved out from under it, and
-the game force-tries that save, so the process dies. Loading works: the game
-re-reads the save files whenever the Load screen opens, and the other account's
-saves appear correctly. It is only the write that cannot survive the swap.
+the game force-tries that save, so the process dies.
+
+Writing over the files in place instead, keeping their inodes so the game's
+open handle stays valid, was tried too. It fails the other way: SQLite has the
+-shm memory-mapped, overwriting that file on disk does not change the mapping,
+and the game stops seeing any saves at all. On 2.5.3 the main menu went from
+offering Continue and Load to offering only New Game and Config.
+
+So the game reading the other account's saves and the game saving afterwards
+want opposite things from the same files, and no swap satisfies both.
 
 Nothing was damaged either time. The save came through both crashes intact and
 passing an integrity check, which is why this refuses rather than warns: the
@@ -1021,38 +1028,70 @@ def _save_files(folder):
             if os.path.exists(os.path.join(folder, "SaveDataEntity.sqlite" + s))]
 
 
-def move_saves_out(folder, keep_dir):
-    """Take the save files out of the folder and put them somewhere safe."""
-    os.makedirs(keep_dir, exist_ok=True)
-    moved = []
-    for path in _save_files(folder):
-        shutil.move(path, os.path.join(keep_dir, os.path.basename(path)))
-        moved.append(os.path.basename(path))
-    return moved
+def copy_over(src_folder, dst_folder):
+    """What `cp -r src dst` plus "replace all" does, and it is load-bearing.
+
+    Writing into a file that already exists truncates it and keeps its inode,
+    so a program holding that file open follows the new contents. Moving the
+    old file away and putting a new one in its place looks identical on disk
+    and is not: the new file is a new inode, and the open handle is left on an
+    orphan.
+
+    FANTASIAN holds its database open the whole time it runs, and neither way
+    of swapping works, for opposite reasons:
+
+      Replace the files.  New inode. The game re-reads on the Load screen and
+                          shows the other account's saves correctly. Its open
+                          handle is now on an orphan, so the next save throws
+                          and the game, which force-tries that save, dies.
+
+      Write over the top. Same inode, so the handle stays valid. But SQLite has
+                          the -shm memory-mapped, and overwriting that file on
+                          disk does not change the mapping, so the game does not
+                          see the new saves at all. Tried on 2.5.3: the Load
+                          screen went from listing a save to offering only NEW
+                          GAME and CONFIG.
+
+    Reading the swapped saves and writing afterwards need opposite things from
+    the same file. That is why this is kept but not used.
+    """
+    written = []
+    for name in sorted(os.listdir(src_folder)):
+        src = os.path.join(src_folder, name)
+        dst = os.path.join(dst_folder, name)
+        if os.path.isdir(src):
+            os.makedirs(dst, exist_ok=True)
+            written += [os.path.join(name, w) for w in copy_over(src, dst)]
+        else:
+            shutil.copyfile(src, dst)      # truncate in place, keep the inode
+            written.append(name)
+    return written
 
 
-def copy_saves_in(src_folder, folder):
-    copied = []
-    for path in _save_files(src_folder):
-        shutil.copy2(path, os.path.join(folder, os.path.basename(path)))
-        copied.append(os.path.basename(path))
-    return copied
+def copy_aside(folder, keep_dir):
+    """Take a copy, leaving the originals where they are."""
+    if os.path.isdir(keep_dir):
+        shutil.rmtree(keep_dir)
+    shutil.copytree(folder, keep_dir)
+    return sorted(os.path.basename(f) for f in _save_files(keep_dir))
 
 
-def delete_saves(folder):
+def replace_saves(src_folder, dst_folder):
+    """Delete the save files and put the other set there instead.
+
+    This is the swap that lets the game SEE the other account's saves. It also
+    guarantees the save afterwards will fail, and the two facts have the same
+    cause. See the note on copy_over.
+    """
     removed = []
-    for path in _save_files(folder):
+    for path in _save_files(dst_folder):
         os.remove(path)
         removed.append(os.path.basename(path))
-    return removed
-
-
-def move_saves_back(keep_dir, folder):
-    moved = []
-    for path in _save_files(keep_dir):
-        shutil.move(path, os.path.join(folder, os.path.basename(path)))
-        moved.append(os.path.basename(path))
-    return moved
+    added = []
+    for path in _save_files(src_folder):
+        shutil.copy2(path, os.path.join(dst_folder, os.path.basename(path)))
+        added.append(os.path.basename(path))
+    return removed, added
 
 
 def game_is_running():
@@ -1141,19 +1180,14 @@ back out under the account signed in here.
 
 Five steps. This tool does the file moving, you do the game.
 
-  1. You:  start FANTASIAN and load one of THIS account's own saves.
-  2. Tool: move this account's saves aside, put the old account's saves in.
+  1. You:  start FANTASIAN and leave it at the main menu.
+  2. Tool: copy this account's saves aside, write the old account's over them.
   3. You:  open Load. The old saves are listed. Load the one you want.
-  4. Tool: take the old saves out, put this account's saves back.
+  4. Tool: write this account's own saves back over the top.
   5. You:  in game, reach a save point and save. That is the write that counts.
 
-Step 1 matters, and it is not optional. Being at the main menu is enough to
-SEE the swapped saves at step 3, because the game re-reads the files whenever
-the Load screen opens. It is not enough for step 5. Skipping step 1 and going
-from the main menu was tried on 2.5.3 and the game died at the save with an
-illegal instruction, inside NSManagedObjectContext.save(), because the store it
-had open was moved out from under it. Nothing was damaged, but nothing was
-saved either.
+The main menu is enough at step 1. The game re-reads the save files whenever
+the Load screen opens.
 
 Read this before you start, because it is the part that goes wrong:
 
@@ -1177,23 +1211,19 @@ Read this before you start, because it is the part that goes wrong:
               f"back over\n  {target_folder}")
 
         running = game_is_running()
-        print(STEP + "STEP 1. Start FANTASIAN and load one of THIS account's own saves,\n"
-              "so the game is running inside the world.\n\n"
-              "Do not skip this by sitting at the main menu. It is enough to see the\n"
-              "swapped saves later, but the save at step 5 then dies with an illegal\n"
-              "instruction, because the game never had this account's database open for\n"
-              "writing.")
+        print(STEP + "STEP 1. Start FANTASIAN and leave it sitting at the main menu.")
         if running is False:
             print("\n(The game does not look like it is running yet.)")
-        _wait("\n  Loaded into one of this account's saves? Press return. ")
+        _wait("\n  Game open at the main menu? Press return. ")
 
         keep_dir = os.path.join(os.path.dirname(backup.rstrip(os.sep)),
                                 os.path.basename(backup) + ".in-use")
         print(STEP + "STEP 2. Swapping the saves.")
-        moved = move_saves_out(target_folder, keep_dir)
-        print(f"  moved out: {', '.join(moved)}")
-        copied = copy_saves_in(src_folder, target_folder)
-        print(f"  copied in: {', '.join(copied)}")
+        kept = copy_aside(target_folder, keep_dir)
+        print(f"  copied aside: {', '.join(kept)}")
+        removed, added = replace_saves(src_folder, target_folder)
+        print(f"  removed: {', '.join(removed)}")
+        print(f"  put in:  {', '.join(added)}")
         swapped = load_save(target_folder)
         print("\n  The game will now offer:\n")
         show(swapped.records, indent="    ")
@@ -1204,14 +1234,9 @@ Read this before you start, because it is the part that goes wrong:
         _wait("\n  Loaded into the save you want? Press return. ")
 
         print(STEP + "STEP 4. Putting this account's own saves back.")
-        removed = delete_saves(target_folder)
+        removed, added = replace_saves(keep_dir, target_folder)
         print(f"  removed: {', '.join(removed)}")
-        restored = move_saves_back(keep_dir, target_folder)
-        print(f"  restored: {', '.join(restored)}")
-        try:
-            os.rmdir(keep_dir)
-        except OSError:
-            pass
+        print(f"  put in:  {', '.join(added)}")
         back = load_save(target_folder)
         print("\n  This account's own save is back on disk:\n")
         show(back.records, indent="    ")
