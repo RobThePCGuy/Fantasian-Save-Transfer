@@ -137,9 +137,27 @@ $ ls /Users/otheruser/Library
 ls: /Users/otheruser/Library: Permission denied
 ```
 
-**Do not reach for sudo.** A tool that moves game saves has no business asking for an
-administrator password, and on current macOS elevation alone often still will not get you
-into another user's Library. The route that needs no permissions at all:
+There are two ways past that, and you should know what each one costs.
+
+**The tool can ask for your password.** `--from-user NAME` reads that account's game folder
+directly, and macOS will want an administrator password to allow it.
+
+```bash
+python3 fantasian.py to-account --list-accounts      # who is on this Mac
+python3 fantasian.py to-account --from-user robert
+```
+
+Be clear about what it does with that: one copy of three files out of that account's game
+folder, into a staging folder on your Desktop that it then hands to you. Every step after
+that copy runs as you, with no elevation. It asks only when the folder is genuinely
+unreadable, and `--list-accounts` will tell you plainly when it cannot see inside one
+rather than pretending that account has no save.
+
+You are right to be suspicious of a game-save tool wanting an administrator password. Read
+`stage_saves` in the source before you type it, or use the other route, which needs no
+password at all.
+
+**The route that needs no permissions.** Nothing here requires elevation:
 
 1. Log in as that other user.
 2. Copy their `FANTASIAN` folder (the path below) into `/Users/Shared`.
