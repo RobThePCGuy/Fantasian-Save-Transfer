@@ -18,9 +18,17 @@ Found 4 save slot(s):
 
 One file, standard library only, Python 3.8 and up. Nothing to install.
 
-On a Mac, double-click **Fantasian save tool.command** and pick from the menu. The first
-time, macOS refuses to run a file you downloaded: right-click it, pick **Open**, then
-**Open** again. That happens once.
+Double-click a launcher and pick from the menu: **Fantasian save tool.bat** on Windows,
+**Fantasian save tool.command** on a Mac.
+
+On Windows, if you have no Python yet, get it from
+[python.org](https://www.python.org/downloads/) and tick **Add python.exe to PATH** during
+setup. On a Mac the first run is refused because you downloaded the file: right-click it,
+pick **Open**, then **Open** again. That happens once.
+
+Which machine you want depends on what you are doing. Editing a Neo Dimension save, and
+installing a converted one, happen on the PC the game is on. Reading an Apple Arcade save
+out of its container has to happen on the Mac that played it.
 
 Everything below is the same thing from the command line.
 
