@@ -10,10 +10,10 @@ The save is still yours. This moves it.
 ```
 Found 4 save slot(s):
 
-  GameData0  autosave 2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
-  GameData10 slot 10  2021/06/11 11:52:45    1.0h     3,980 G   NewTownEn
-  GameData1  slot 1   2021/08/23 11:42:06   16.6h    35,368 G   CityVibra
-  GameData2  slot 2   2026/08/19 09:44:41   16.8h    35,868 G   CityVibra
+  GameData0  autosave 2025/03/14 21:08:52   42.3h    88,120 G   CityVibra
+  GameData10 slot 10  2025/02/02 17:44:10    3.1h     6,450 G   NewTownEn
+  GameData1  slot 1   2025/03/14 20:55:01   42.2h    88,120 G   CityVibra
+  GameData2  slot 2   2025/01/19 12:30:27   28.7h    51,300 G   Vence
 ```
 
 One file, standard library only, Python 3.8 and up. Nothing to install.
@@ -36,9 +36,8 @@ and the next launch pulls the server's copy back over the top. Preserving the ac
 sync metadata makes this worse rather than better: an intact server change token is exactly
 what lets iCloud conclude it is already in sync and overwrite without hesitating.
 
-Watched happening, three times in a row: the other account's saves were confirmed in place
-on disk, and about thirty seconds later the running game had replaced them with the
-account's own again.
+In practice this is fast and easy to miss: the other account's saves sit correctly on disk,
+and roughly thirty seconds later the running game has quietly put the account's own back.
 
 **So the only write that counts is one the game itself makes.** The old account's saves go
 in front of a running game, you load one, the account's own database goes back underneath,
@@ -72,9 +71,10 @@ SaveDataManager_SaveGameData
      → GameDataEntityController.saveContext(author:)   EXC_BAD_INSTRUCTION
 ```
 
-That happened on two earlier attempts on 2.5.3. It did not happen on the run this
-procedure is built from, and what was different is not known. Nothing was damaged any of
-those times: the database came back byte identical and passing an integrity check.
+This is a real risk on 2.5.3 and it is not fully understood, so treat it as possible every
+time. It costs you the attempt, not the save: through every crash seen so far the database
+came back byte identical and passing an integrity check, and your folder is copied aside
+before anything moves.
 
 **"Confirm Save Data".** On a later launch the game may say your progress on this device
 and on iCloud differ, and offer a card for each with a timestamp, a Checkpoints level and a
@@ -144,7 +144,7 @@ directly, and macOS will want an administrator password to allow it.
 
 ```bash
 python3 fantasian.py to-account --list-accounts      # who is on this Mac
-python3 fantasian.py to-account --from-user robert
+python3 fantasian.py to-account --from-user OTHERNAME
 ```
 
 Be clear about what it does with that: one copy of three files out of that account's game
@@ -182,7 +182,7 @@ Copy that folder off the Mac that has it, zip it, and point the tool at the zip.
 **Copy the whole folder, not just `SaveDataEntity.sqlite`.** FANTASIAN keeps your current
 progress in the `SaveDataEntity.sqlite-wal` file beside it. Take the `.sqlite` on its own
 and you get an empty database, which is how people end up transferring a save from months
-ago and never work out why. On the save this was built against, the `.sqlite` alone held
+ago and never work out why. On a real save, the `.sqlite` alone can hold
 **zero** slots and everything real lived in the `-wal`.
 
 ## Everything else
@@ -286,12 +286,12 @@ Neo Dimension is a remaster. The save schema matches, but individual map, flag a
 IDs are not guaranteed identical across both releases. The Steam transfer is confirmed
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
-The account transfer has been carried through on 2.5.3, once, watched at the filesystem
-the whole way. Two earlier attempts on that build crashed the game instead, and what was
-different is not known, so treat it as a procedure with a helper attached rather than a
-solved problem. What is verified either way is that it never costs you the save: through
-both crashes the database came back byte identical and passing an integrity check, and the
-folder is copied aside before anything moves.
+The account transfer has been carried through end to end on 2.5.3, and it has also crashed
+the game on that build, so treat it as a procedure with a helper attached rather than a
+solved problem. Two things temper it further: the run it is built from moved a save between
+two accounts that already held the same progress, so it shows the sequence completes rather
+than proving the data crossed; and a crash costs you the attempt, not the save, because the
+database survived every one intact and your folder is copied aside first.
 
 Back up, and look at the slot in-game before you put another sixty hours on top of it.
 

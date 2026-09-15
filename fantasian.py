@@ -961,10 +961,9 @@ The only write that survives is one the game itself makes. So the old account's
 save is put in front of a running game long enough to be loaded, and then the
 game's own save writes it back out under the account signed in here.
 
-Watched live on 2.5.3, 2026-09-07, and the sequence completed: no crash, and the
-save survived a quit and relaunch. Earlier builds of this tool refused to run at
-all, because two attempts had crashed the game. What was different about the run
-that worked is not known.
+This has been carried through end to end on 2.5.3, save intact through a quit
+and relaunch. It has also crashed the game on that build, and why one run
+crashes and another does not is not understood, so go in expecting either.
 
 Two things that will still bite you:
 
