@@ -1134,9 +1134,24 @@ def container_for(user):
     return os.path.join("/Users", user, CONTAINER_REL)
 
 
+class _Failed:
+    """Stand-in for a command that is not on this machine at all."""
+    returncode = 1
+    stdout = b""
+
+
 def _run(cmd):
+    """Run a command, treating "not installed" as "it failed".
+
+    subprocess.run RAISES when the program does not exist, and sudo does not
+    exist on Windows. Letting that escape turned `to-account --list-accounts`
+    into an unhandled FileNotFoundError there instead of an empty list.
+    """
     import subprocess
-    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return _Failed()
 
 
 def sudo_without_password():
@@ -1185,6 +1200,8 @@ def discover_accounts():
     tell the person their other account does not exist.
     """
     out = []
+    if sys.platform != "darwin":
+        return out          # Apple Arcade saves only live in a macOS container
     sudo = sudo_without_password()
     try:
         users = sorted(os.listdir("/Users"))
@@ -1371,7 +1388,12 @@ def cmd_to_account(args):
     if getattr(args, "list_accounts", False):
         found = discover_accounts()
         if not found:
-            print("No FANTASIAN saves found under /Users.")
+            if sys.platform != "darwin":
+                print("Apple Arcade saves live in a macOS app container, so there "
+                      "are no accounts to list on this machine.\n"
+                      "Point this at a folder or zip copied off the Mac instead.")
+            else:
+                print("No FANTASIAN saves found under /Users.")
             return 0
         note = {"readable": "", "needs_sudo": "needs your password",
                 "unknown": "cannot tell without your password"}

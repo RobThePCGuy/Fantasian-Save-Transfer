@@ -449,7 +449,9 @@ class AccountDiscovery(Base):
 
     def test_probe_tells_denied_apart_from_absent(self):
         """os.path.isdir answers False for both, and they mean opposite things."""
-        if os.geteuid() == 0:
+        if sys.platform == "win32":
+            self.skipTest("chmod does not deny reads on Windows")
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("root can read anything, so nothing is ever denied")
         locked = os.path.join(self.tmp, "locked")
         inside = os.path.join(locked, "FANTASIAN")
@@ -535,16 +537,38 @@ class TransferSteps(Base):
                              for r in ft.load_save(self.new).records)
                 self.assertEqual(got, ["0"])
 
-    def test_a_swap_gives_the_files_new_inodes(self):
-        """Finder's Replace All, not a write over the top. Keeping the inode
-        leaves the game's -shm mapping stale and it stops seeing any saves."""
-        before = os.stat(os.path.join(self.new, "SaveDataEntity.sqlite-wal")).st_ino
-        for step in ft.account_transfer(self.old, self.new):
-            if step.key == "swap-in":
-                after = os.stat(os.path.join(self.new,
-                                             "SaveDataEntity.sqlite-wal")).st_ino
-                self.assertNotEqual(before, after)
-                break
+    def test_a_swap_orphans_a_handle_that_was_already_open(self):
+        """Finder's Replace All, not a write over the top.
+
+        This used to compare inode NUMBERS, which is not a portable way to say
+        it: ext4 hands a freed number straight back, so remove-then-create can
+        land on the very same number and the check passed on macOS while
+        failing on Linux for no real reason.
+
+        What actually matters is the consequence. The game holds its database
+        open the whole time it runs, so the swap has to leave that handle on the
+        old bytes rather than rewriting the file underneath it. Writing over the
+        top keeps the handle live, and the game then goes blind: on 2.5.3 the
+        main menu dropped Continue and Load and offered only New Game and
+        Config.
+        """
+        if sys.platform == "win32":
+            self.skipTest("Windows will not unlink a file that is open")
+        wal = os.path.join(self.new, "SaveDataEntity.sqlite-wal")
+        with open(wal, "rb") as held:
+            was = held.read()
+            for step in ft.account_transfer(self.old, self.new):
+                if step.key == "swap-in":
+                    break
+            held.seek(0)
+            through_the_old_handle = held.read()
+        with open(wal, "rb") as fresh:
+            on_disk_now = fresh.read()
+
+        self.assertEqual(was, through_the_old_handle,
+                         "the open handle should still see the old save")
+        self.assertNotEqual(was, on_disk_now,
+                            "the path should now hold the other account's save")
 
     def test_it_stops_when_the_game_goes_away(self):
         ft.game_is_running = lambda: False
