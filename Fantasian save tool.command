@@ -8,17 +8,35 @@ pause() { printf '\n'; read -r -p '  Press return to close. ' _; }
 
 printf '\n  FANTASIAN save tool\n  %s\n\n' "$(printf '%.0s-' {1..40})"
 
-if ! command -v python3 >/dev/null 2>&1; then
-    say "  Python 3 is not installed on this Mac."
+if [ ! -f fantasian.py ]; then
+    say "  This needs the rest of its folder, and it cannot see it."
     say ""
-    say "  Open Terminal and run:  xcode-select --install"
-    say "  then double-click this again."
+    say "  Open the zip so it becomes a folder, then double-click this file from"
+    say "  inside that folder."
+    say ""
+    say "  Running from: $(pwd)"
     pause; exit 1
 fi
 
-if ! python3 fantasian.py self-test >/dev/null 2>&1; then
-    say "  The built-in encryption check failed on this Mac."
-    say "  Something is wrong with the download. Get a fresh copy."
+# Run it rather than look for it: on a Mac without developer tools, python3 is
+# a stub that only offers to install them.
+python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 8) else 3)' >/dev/null 2>&1
+case $? in
+    0) ;;
+    3)  say "  Python 3 is installed, but it is older than 3.8, which this needs."
+        say "  Get a current one from https://www.python.org/downloads/"
+        pause; exit 1 ;;
+    *)  say "  Python 3 is not installed on this Mac."
+        say ""
+        say "  Open Terminal and run:  xcode-select --install"
+        say "  then double-click this again."
+        pause; exit 1 ;;
+esac
+
+if ! checked="$(python3 fantasian.py self-test 2>&1)"; then
+    say "  Python ran, but the tool's own check did not pass. This is what it said:"
+    say ""
+    printf '%s\n' "$checked"
     pause; exit 1
 fi
 

@@ -36,7 +36,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.5.0"
+__version__ = "3.5.1"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -223,11 +223,12 @@ class Save:
     exact bytes the game wrote rather than a re-serialisation of them.
     """
 
-    def __init__(self, records, origin, source, raw_blob=None):
+    def __init__(self, records, origin, source, raw_blob=None, root=None):
         self.records = records
         self.origin = origin
         self.source = source
         self.raw_blob = raw_blob
+        self.root = root          # the whole Neo Dimension file, as read
 
     def __len__(self):
         return len(self.records)
@@ -280,9 +281,90 @@ def canonical_order(records):
 
 
 def record_plaintext(record):
-    if "dataString" in record:
-        return record["dataString"]
-    return decrypt(base64.b64decode(record["encryptedString"])).decode("utf-8")
+    """A record's save text, from whichever field actually holds it.
+
+    Neo Dimension keeps the save in encryptedString, and that is what the game
+    reads. Apple Arcade keeps it as plain text in dataString. This used to check
+    for dataString first and trust it, so a record the game wrote with an EMPTY
+    dataString beside a good encryptedString read as nothing at all and failed
+    with "Expecting value". The editor this descends from reads encryptedString
+    and never looks at dataString, which is why the same file worked there.
+    """
+    encrypted = record.get("encryptedString")
+    if isinstance(encrypted, str) and encrypted:
+        return decrypt(base64.b64decode(encrypted)).decode("utf-8")
+    plain = record.get("dataString")
+    if isinstance(plain, str) and plain:
+        return plain
+    raise SaveError(f"{record.get('path', 'a record')} holds no save data")
+
+
+def record_shape(record):
+    """What a record holds, described without printing any of the save itself.
+
+    For when a record will not read. A save the game wrote on some build this
+    tool has not seen can differ in a way nobody can guess from a bare
+    "Expecting value" message, and guessing at the shape would be worse than
+    useless here, because edit writes records back. So this reports what is
+    actually there: which fields, how long, what each looks like, and the first
+    few bytes of anything that decrypts. That is enough to recognise a byte
+    order mark, compression, or a field under a different name, and it contains
+    nothing of the player's progress.
+    """
+    lines = [f"  fields: {', '.join(sorted(record)) or 'none'}"]
+    for key in sorted(record):
+        if key == "path":
+            continue
+        value = record[key]
+        if not isinstance(value, str):
+            lines.append(f"  {key}: a {type(value).__name__}, not text")
+            continue
+        head = value.lstrip()[:1]
+        if not value:
+            lines.append(f"  {key}: empty")
+            continue
+        if head in ("{", "["):
+            lines.append(f"  {key}: {len(value):,} characters, looks like plain JSON")
+            continue
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except Exception:
+            lines.append(f"  {key}: {len(value):,} characters, neither JSON nor base64, "
+                         f"starts with byte 0x{ord(value[0]):02x}")
+            continue
+        lines.append(f"  {key}: {len(value):,} characters of base64, "
+                     f"{len(raw):,} bytes decoded"
+                     + ("" if len(raw) % 16 == 0 else ", not a whole number of AES blocks"))
+        if len(raw) % 16 == 0 and raw:
+            try:
+                plain = decrypt(raw)
+                lines.append(f"    decrypts to {len(plain):,} bytes, first bytes "
+                             f"{plain[:8].hex(' ')}")
+            except ValueError as exc:
+                lines.append(f"    does not decrypt with this tool's key: {exc}")
+    return "\n".join(lines)
+
+
+def unreadable(records):
+    """[(record, reason)] for every record that will not unpack."""
+    out = []
+    for r in records:
+        try:
+            unpack(r)
+        except Exception as exc:
+            out.append((r, exc))
+    return out
+
+
+def report_unreadable(bad):
+    """The message for saves this tool cannot read, with enough to fix it."""
+    parts = [f"{len(bad)} save slot(s) here could not be read, so nothing was changed.\n"]
+    for record, exc in bad:
+        parts.append(f"{record.get('path', '?')}: {exc}\n{record_shape(record)}\n")
+    parts.append("Nothing above is your save's contents, only its shape. Pasting it into "
+                 "an issue at https://github.com/RobThePCGuy/Fantasian-Save-Transfer/issues "
+                 "is enough to work out what this file is doing differently.")
+    return "\n".join(parts)
 
 
 def describe(record):
@@ -431,7 +513,7 @@ def load_save(path):
     if "dataString" in obj and "records" not in obj:
         records = json.loads(obj["dataString"])["records"]
         if records and "encryptedString" in records[0]:
-            return Save(records, "steam", path)
+            return Save(records, "steam", path, root=obj)
     return Save(_records_from_blob(blob), "arcade", path, raw_blob=blob)
 
 
@@ -831,17 +913,37 @@ def apply_edits(save_dict, args):
 # ---------------------------------------------------------------------------
 
 def resolve_source(path, what="save"):
+    """The save to use when none was named: whichever game is on this machine.
+
+    This used to look only for the Apple Arcade save, which lives in a macOS
+    container, so on a PC "use the save on this machine" could never succeed
+    and every default run said there was no save. It now falls back to the Neo
+    Dimension save. When one PC holds saves for more than one Steam account it
+    stops and lists them rather than picking, because edit writes back into
+    whichever one it read.
+    """
     if path:
         return path
     found = find_arcade_save()
-    if not found:
+    if found:
+        print("Reading the Apple Arcade save installed on this Mac.")
+        return found
+    roots = find_steam_roots()
+    if len(roots) == 1:
+        print("Reading the Neo Dimension save on this PC.")
+        return roots[0]
+    if len(roots) > 1:
+        listing = "\n".join(f"  {r}" for r in roots)
         raise SaveError(
-            f"no Apple Arcade FANTASIAN {what} on this machine, and none was given.\n"
-            f"Looked in {ARCADE_SAVE_DIR}\n"
-            "If you played on another Mac, copy that FANTASIAN folder over and pass it "
-            "as an argument.")
-    print("Reading the Apple Arcade save installed on this Mac.")
-    return found
+            f"this machine has Neo Dimension saves for {len(roots)} Steam accounts:\n"
+            f"{listing}\n\n"
+            "Say which one by passing its root.json, so nothing gets written into "
+            "the wrong account.")
+    raise SaveError(
+        f"no FANTASIAN {what} on this machine, and none was given.\n"
+        f"Looked for Apple Arcade in {ARCADE_SAVE_DIR}\n"
+        f"and for Neo Dimension under Documents\\My Games\\{GAME_DIR_NAME}\\Steam.\n"
+        "Pass a FANTASIAN folder, a zip of one, or a root.json.")
 
 
 def cmd_slots(args):
@@ -849,6 +951,9 @@ def cmd_slots(args):
     print(f"\n{len(save)} save slot(s) in {save.source}:\n")
     show(save.records)
     print()
+    bad = unreadable(save.records)
+    if bad:
+        raise SaveError(report_unreadable(bad))
     return 0
 
 
@@ -1480,6 +1585,10 @@ def cmd_edit(args):
     print(f"\n{len(save)} save slot(s) in {save.source}:\n")
     show(save.records)
 
+    bad = unreadable(save.records)
+    if bad:
+        raise SaveError(report_unreadable(bad))
+
     if args.slot is None:
         # Whichever save has the most time on it, autosaves included. Skipping
         # what looks like an autosave would mean guessing which file that is,
@@ -1529,18 +1638,29 @@ def cmd_edit(args):
     for change in changes:
         print("  " + change)
 
-    record["dataString"] = repack(save_dict)
-    record.pop("encryptedString", None)
-
     if save.origin == "steam":
+        # Change this one record and nothing else. Rebuilding the file instead
+        # dropped any field the game wrote that this tool does not know about,
+        # on the records and at the top of the file, and put the records in a
+        # different order: a quiet way to damage a save while reporting success.
+        # This is how the editor built against real game files writes, too.
+        record["encryptedString"] = base64.b64encode(
+            encrypt(repack(save_dict).encode("utf-8"))).decode("utf-8")
+        root = dict(save.root or {})
+        root["dataString"] = json.dumps({"records": save.records}, separators=(",", ":"))
+        still_bad = unreadable(json.loads(root["dataString"])["records"])
+        if still_bad:
+            raise SaveError("the edited file did not read back, so it was not written.\n"
+                            + report_unreadable(still_bad))
         out = args.output or save.source
         if os.path.exists(out):
             print(f"\nBacked up to\n  {backup_file(out)}")
-        root, final, _, _ = build_steam_root(save.records)
         with open(out, "w", encoding="utf-8") as f:
             json.dump(root, f, indent=4)
         print(f"\nWrote {out}.")
     else:
+        record["dataString"] = repack(save_dict)
+        record.pop("encryptedString", None)
         folder = save.source if os.path.isdir(save.source) else \
             os.path.dirname(os.path.abspath(save.source))
         db = arcade_db_in(folder)

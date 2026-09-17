@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.8", "3.13"]
+        python: ["3.8", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,11 +29,19 @@ jobs:
       # The double-click launchers are how most people will actually run this,
       # so smoke them on the platform they belong to: Python detection, the
       # self-test gate, the menu, and a clean exit.
+      # Assert on what it SAYS, not its exit code: the launchers exit 0 whether
+      # or not their checks pass, so an exit-code check can never go red.
+      # "Nothing done." is only reachable past the Python and self-test gates.
       - name: windows launcher
         if: runner.os == 'Windows'
         shell: cmd
-        run: echo q| "Fantasian save tool.bat"
+        run: |
+          echo q| "Fantasian save tool.bat" > launcher.txt
+          type launcher.txt
+          findstr /C:"Nothing done." launcher.txt
 
       - name: mac launcher
         if: runner.os == 'macOS'
-        run: printf 'q\n\n' | ./"Fantasian save tool.command"
+        run: |
+          printf 'q\n\n' | ./"Fantasian save tool.command" | tee launcher.txt
+          grep -q "Nothing done." launcher.txt
