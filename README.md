@@ -313,6 +313,9 @@ Neo Dimension is a remaster. The save schema matches, but individual map, flag a
 IDs are not guaranteed identical across both releases. The Steam transfer is confirmed
 working on a mid-Part-1 save, four slots, roughly seventeen hours.
 
+Bringing a Neo Dimension save back to a Mac with `to-mac` is confirmed working end to end
+on a real Mac: a 42.5 hour, seven slot save, October 2026.
+
 The account transfer has been carried through end to end on 2.5.3, and it has also crashed
 the game on that build, so treat it as a procedure with a helper attached rather than a
 solved problem. Two things temper it further: the run it is built from moved a save between

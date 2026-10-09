@@ -36,7 +36,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.6.1"
+__version__ = "3.6.2"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -1696,19 +1696,42 @@ def cmd_to_mac(args):
     try:
         staged = stage_steam_as_arcade(save, target_folder,
                                        os.path.join(tmp, "FANTASIAN"))
-        print(f"\nThe Neo Dimension save, converted for Apple Arcade:\n")
+        print(f"\nYour Steam saves:\n")
         show(staged.records)
         if args.dry_run:
             print(f"\nIt would go into {target_folder}, which now holds:\n")
             show(load_save(target_folder).records)
             print(f"\n{TRANSFER_NOTE}\n\n{STEP}Dry run. Nothing was moved.")
             return 0
-        print()
-        print(TRANSFER_NOTE)
-        drive_transfer(staged.source, target_folder)
+        print("\n" + TO_MAC_NOTE)
+        for step in account_transfer(staged.source, target_folder):
+            text = TO_MAC_STEPS.get(step.key)
+            if text is None:
+                continue
+            print("\n" + text.format(**step.paths))
+            if step.waits:
+                _wait("   Press return when done. ")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+TO_MAC_NOTE = """Your save goes in through the game itself, because iCloud only keeps saves the
+game wrote. Do what each numbered step says, then press return here. Do not
+quit the game until step 4."""
+
+# What to-mac prints for each step of account_transfer. A step left out here
+# is not shown: the plan is the list just printed, and the swap is silent.
+TO_MAC_STEPS = {
+    "backup": "This Mac's saves are backed up to\n  {backup}",
+    "game-open": "1. Start FANTASIAN and stay on the main menu.",
+    "load": "2. Open Load, pick the save you want, and let it load into the world.",
+    "swap-back": "   If the Load screen now looks empty or old, ignore it and keep going.",
+    "save": "3. Save at a save point, in an empty slot if you have one. If the game\n"
+            "   crashes here, nothing is lost: run this again.",
+    "done": "4. Done. Quit and relaunch to check. If the game asks \"Confirm Save Data\",\n"
+            "   pick the newest one.",
+}
 
 
 def cmd_edit(args):
