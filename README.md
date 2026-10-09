@@ -115,6 +115,24 @@ further and writes into the Neo Dimension save folder itself, backing up what is
 first. It finds that folder on its own, including when Windows has redirected Documents
 into OneDrive and when you are on a Steam Deck.
 
+## Bring a Neo Dimension save back to a Mac
+
+```bash
+python3 fantasian.py to-mac root.json              # every slot in it
+python3 fantasian.py to-mac root.json --slots 2    # just GameData2
+python3 fantasian.py to-mac root.json --dry-run
+```
+
+Copy `root.json` off the PC (USB stick, cloud drive, email to yourself) and run this on
+the Mac, or pick **5** in the Mac launcher. The Mac's game has to have saved once.
+
+It converts the Steam save into an Apple Arcade database, built on a copy of this Mac's
+own, and then walks the same procedure as moving between accounts, for the same reason:
+iCloud only keeps a save the game itself wrote. The running game loads your Steam slot,
+this Mac's own files go back underneath, and you save in game. Everything in the account
+transfer section above about the Load screen, the crash and "Confirm Save Data" applies
+here too.
+
 ## Edit a save
 
 Works on an Apple Arcade save and a Neo Dimension `root.json` alike.

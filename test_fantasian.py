@@ -41,7 +41,10 @@ def fake_home(path):
 
     HOME is enough on macOS and Linux. Windows resolves ~ from USERPROFILE and
     ignores HOME entirely, so both get set, and OneDrive is cleared so the
-    runner's real one does not leak into the search.
+    runner's real one does not leak into the search. Windows also records where
+    Documents really is in the registry, which no environment variable reaches,
+    so that lookup is stubbed too: on a PC with the game installed it found the
+    real save.
     """
     patched = {"HOME": path, "USERPROFILE": path}
     saved = {k: os.environ.get(k)
@@ -49,9 +52,12 @@ def fake_home(path):
     os.environ.update(patched)
     os.environ.pop("OneDrive", None)
     os.environ.pop("OneDriveConsumer", None)
+    real_documents = ft._windows_documents
+    ft._windows_documents = lambda: None
     try:
         yield
     finally:
+        ft._windows_documents = real_documents
         for k, v in saved.items():
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 

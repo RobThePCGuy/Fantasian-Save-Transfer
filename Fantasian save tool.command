@@ -52,6 +52,7 @@ say "  1  Move my Apple Arcade save to Steam (Neo Dimension)"
 say "  2  Move a save in from another Apple Arcade account"
 say "  3  Edit a save (money, items, experience)"
 say "  4  Show me what is in a save"
+say "  5  Bring my Steam (Neo Dimension) save back to this Mac"
 say "  q  Quit"
 printf '\n'
 read -r -p '  Which one? ' choice
@@ -134,6 +135,22 @@ case "$choice" in
         python3 fantasian.py slots || true
     else
         python3 fantasian.py slots "$dropped" || true
+    fi
+    ;;
+5)
+    say "  This puts your Neo Dimension save into Apple Arcade on this Mac."
+    say "  The game here needs to have saved once already."
+    say ""
+    say "  You drive the game; this moves the files at the right moments."
+    printf '\n'
+    say "  Drag in the root.json you copied off the PC, then press return."
+    printf '\n'
+    SRC="$(read_path)"
+    printf '\n'
+    if [ -z "$SRC" ]; then
+        printf '  Nothing given, stopping.\n'
+    else
+        python3 fantasian.py to-mac "$SRC" || printf '\n  It stopped. The reason is above.\n'
     fi
     ;;
 q|Q|"")

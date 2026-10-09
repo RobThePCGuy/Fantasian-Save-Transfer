@@ -36,7 +36,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.5.1"
+__version__ = "3.6.0"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -1425,7 +1425,8 @@ def account_transfer(source_folder, target_folder, backup_root=None):
     if source.origin != "arcade":
         raise SaveError(
             f"{source_folder} is not an Apple Arcade save. This moves a save "
-            "between Apple Arcade accounts; to go to Steam, use to-steam.")
+            "between Apple Arcade accounts. To go to Steam, use to-steam; to "
+                "bring a Neo Dimension save back to this Mac, use to-mac.")
 
     yield Step("plan", "tool",
                "Ready to move the save",
@@ -1535,7 +1536,8 @@ def cmd_to_account(args):
         if probe.origin != "arcade":
             raise SaveError(
                 f"{args.source} is not an Apple Arcade save. This moves a save "
-                "between Apple Arcade accounts; to go to Steam, use to-steam.")
+                "between Apple Arcade accounts. To go to Steam, use to-steam; to "
+                "bring a Neo Dimension save back to this Mac, use to-mac.")
         source_folder, cleanup = _materialise(args.source)
     else:
         raise SaveError(
@@ -1557,24 +1559,108 @@ def cmd_to_account(args):
             return 0
 
         print(TRANSFER_NOTE)
-        for step in account_transfer(source_folder, target_folder):
-            print(STEP.rstrip())
-            print(f"{'YOU' if step.waits else 'TOOL'}: {step.title}")
-            if step.detail:
-                print("\n" + textwrap.fill(step.detail, 76))
-            for label, value in step.paths.items():
-                if label != "target_records":
-                    print(f"\n  {label}: {value}")
-            if step.records:
-                print()
-                show(step.records, indent="    ")
-            if step.waits:
-                _wait("\n  Done? Press return. ")
+        drive_transfer(source_folder, target_folder)
         return 0
     finally:
         cleanup()
         for d in staged:
             shutil.rmtree(d, ignore_errors=True)
+
+
+def drive_transfer(source_folder, target_folder):
+    """Print each step of account_transfer and wait wherever it asks you to act."""
+    for step in account_transfer(source_folder, target_folder):
+        print(STEP.rstrip())
+        print(f"{'YOU' if step.waits else 'TOOL'}: {step.title}")
+        if step.detail:
+            print("\n" + textwrap.fill(step.detail, 76))
+        for label, value in step.paths.items():
+            if label != "target_records":
+                print(f"\n  {label}: {value}")
+        if step.records:
+            print()
+            show(step.records, indent="    ")
+        if step.waits:
+            _wait("\n  Done? Press return. ")
+
+
+def stage_steam_as_arcade(save, target_folder, dest_folder):
+    """Build an Apple Arcade save folder holding a Neo Dimension save's slots.
+
+    The folder starts as a copy of this Mac's own save files, so the database
+    is one the installed game already knows how to open, and only the save
+    payload inside it is replaced. It is never synced as it stands: the
+    transfer only shows it to the running game long enough to load a slot,
+    then puts this account's own files back before the in-game save.
+    """
+    os.makedirs(dest_folder, exist_ok=True)
+    for path in _save_files(target_folder):
+        shutil.copyfile(path, os.path.join(dest_folder, os.path.basename(path)))
+    records = [{"path": r["path"], "dataString": record_plaintext(r)}
+               for r in save.records]
+    write_into_arcade_db(arcade_db_in(dest_folder), arcade_blob(records))
+
+    staged = load_save(dest_folder)
+    want = {r["path"]: r["dataString"] for r in records}
+    got = {r["path"]: record_plaintext(r) for r in staged.records}
+    if want != got:
+        raise SaveError("the converted save did not read back the same, so nothing "
+                        "was moved")
+    return staged
+
+
+def cmd_to_mac(args):
+    """Carry a Neo Dimension save back into Apple Arcade on this Mac."""
+    if not args.source:
+        raise SaveError(
+            "say which Neo Dimension save to bring across: copy root.json off the "
+            "PC and pass its path. On Windows it is in\n"
+            f"  Documents\\My Games\\{GAME_DIR_NAME}\\Steam\\<your steam id>\\_data\\")
+    save = load_save(args.source)
+    if save.origin != "steam":
+        raise SaveError(
+            f"{args.source} is not a Neo Dimension root.json. To move an Apple "
+            "Arcade save between accounts, use to-account.")
+    bad = unreadable(save.records)
+    if bad:
+        raise SaveError(report_unreadable(bad))
+
+    if args.slots is not None:
+        wanted = set(args.slots)
+        picked = [r for r in save.records
+                  if r["path"] in wanted or slot_number(r["path"]) in wanted]
+        if not picked:
+            raise SaveError(
+                "--slots {} matched none of these slots. Available: {}".format(
+                    " ".join(args.slots),
+                    " ".join(sorted(slot_number(r["path"]) for r in save.records))))
+        save.records = picked
+
+    target_folder = args.into or ARCADE_SAVE_DIR
+    if not arcade_db_in(target_folder):
+        raise SaveError(
+            f"no FANTASIAN save in {target_folder}\n\n"
+            "This Mac needs a save of its own first, because the game has to be "
+            "running for this to work. Start FANTASIAN, let it save once, quit, "
+            "and come back.")
+
+    tmp = tempfile.mkdtemp(prefix="fantasian_steam_")
+    try:
+        staged = stage_steam_as_arcade(save, target_folder,
+                                       os.path.join(tmp, "FANTASIAN"))
+        print(f"\nThe Neo Dimension save, converted for Apple Arcade:\n")
+        show(staged.records)
+        if args.dry_run:
+            print(f"\nIt would go into {target_folder}, which now holds:\n")
+            show(load_save(target_folder).records)
+            print(f"\n{TRANSFER_NOTE}\n\n{STEP}Dry run. Nothing was moved.")
+            return 0
+        print()
+        print(TRANSFER_NOTE)
+        drive_transfer(staged.source, target_folder)
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def cmd_edit(args):
@@ -1793,6 +1879,23 @@ def build_parser():
     a.add_argument("--dry-run", action="store_true",
                    help="say what would happen and write nothing")
     a.set_defaults(func=cmd_to_account)
+
+    m = sub.add_parser(
+        "to-mac",
+        help="bring a Neo Dimension save from Steam back to Apple Arcade on this Mac",
+        description="Bring a Neo Dimension save back to Apple Arcade on this Mac.\n\n"
+                    "The same guided procedure as to-account: iCloud only keeps a\n"
+                    "save the game itself wrote, so the running game loads the\n"
+                    "converted save and you save it again in game.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    m.add_argument("source", nargs="?", help="the root.json copied off the PC")
+    m.add_argument("--slots", metavar="N", nargs="+", default=None,
+                   help="only these saves, by GameData number, as shown by `slots`")
+    m.add_argument("--into", metavar="FOLDER",
+                   help=f"the save folder to write into (default: {ARCADE_SAVE_DIR})")
+    m.add_argument("--dry-run", action="store_true",
+                   help="convert and show the result, and move nothing")
+    m.set_defaults(func=cmd_to_mac)
 
     e = sub.add_parser("edit", help="change a save: money, items, experience")
     e.add_argument("save", nargs="?", help=src)
