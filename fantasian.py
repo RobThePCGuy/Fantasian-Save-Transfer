@@ -36,7 +36,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "3.6.0"
+__version__ = "3.6.1"
 
 # Baked into the game, the same on every platform and every copy.
 AES_IV = b"Nq4G3pTQFLTCeiB7"
@@ -617,12 +617,12 @@ def write_into_arcade_db(db_path, blob, dry_run=False):
 # Finding the Neo Dimension save
 # ---------------------------------------------------------------------------
 
-def _windows_documents():
-    """Where Windows actually keeps Documents for this user.
+def _windows_shell_folder(name):
+    """Where Windows actually keeps one of this user's folders.
 
-    Guessing ~/Documents is wrong wherever the folder has been redirected, which
-    OneDrive does by default on plenty of installs. Windows records the real
-    location, so ask it rather than guess.
+    Guessing ~/Documents or ~/Desktop is wrong wherever the folder has been
+    redirected, which OneDrive does by default on plenty of installs. Windows
+    records the real location, so ask it rather than guess.
     """
     try:
         import winreg
@@ -633,10 +633,22 @@ def _windows_documents():
             winreg.HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders")
         with key:
-            value, _ = winreg.QueryValueEx(key, "Personal")
+            value, _ = winreg.QueryValueEx(key, name)
         return os.path.expandvars(value) if value else None
     except OSError:
         return None
+
+
+def _windows_documents():
+    return _windows_shell_folder("Personal")
+
+
+def _desktop():
+    for d in (_windows_shell_folder("Desktop"),
+              os.path.join(os.path.expanduser("~"), "Desktop")):
+        if d and os.path.isdir(d):
+            return d
+    return os.getcwd()
 
 
 def _documents_dirs():
@@ -1609,8 +1621,44 @@ def stage_steam_as_arcade(save, target_folder, dest_folder):
     return staged
 
 
+def prepare_for_mac(args):
+    """The PC half of to-mac: put the save somewhere easy to carry across.
+
+    The transfer itself can only run on the Mac, because the game there has to
+    load the save and write it again. So on a PC this finds the Neo Dimension
+    save, copies it to the Desktop, and says what to do on the other side.
+    Nothing in the game's own folder is touched.
+    """
+    save = load_save(resolve_source(args.source))
+    if save.origin != "steam":
+        raise SaveError(f"{save.source} is not a Neo Dimension root.json")
+    bad = unreadable(save.records)
+    if bad:
+        raise SaveError(report_unreadable(bad))
+    print(f"\n{len(save)} save slot(s) in {save.source}:\n")
+    show(save.records)
+
+    out = os.path.join(_desktop(), "Fantasian-Steam-root.json")
+    if os.path.exists(out):
+        out = out[:-len(".json")] + time.strftime("_%Y%m%d_%H%M%S") + ".json"
+    shutil.copy2(save.source, out)
+    if load_save(out).records != save.records:
+        raise SaveError(f"the copy at {out} did not read back the same")
+
+    print(f"\nCopied it to\n  {out}\n")
+    print("The rest happens on the Mac, where the game has to load it:\n"
+          "  1. Carry that file over: a USB stick, a cloud drive, or email it to "
+          "yourself.\n"
+          "  2. On the Mac, start FANTASIAN once and let it save, if it never has.\n"
+          "  3. Double-click \"Fantasian save tool.command\", pick 5, and drag the\n"
+          "     file in. It walks you through the rest.")
+    return 0
+
+
 def cmd_to_mac(args):
     """Carry a Neo Dimension save back into Apple Arcade on this Mac."""
+    if sys.platform != "darwin" and not args.into:
+        return prepare_for_mac(args)
     if not args.source:
         raise SaveError(
             "say which Neo Dimension save to bring across: copy root.json off the "
@@ -1888,7 +1936,9 @@ def build_parser():
                     "save the game itself wrote, so the running game loads the\n"
                     "converted save and you save it again in game.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    m.add_argument("source", nargs="?", help="the root.json copied off the PC")
+    m.add_argument("source", nargs="?",
+                   help="the root.json copied off the PC. Run on the PC itself, this "
+                        "copies the save to the Desktop ready to carry across.")
     m.add_argument("--slots", metavar="N", nargs="+", default=None,
                    help="only these saves, by GameData number, as shown by `slots`")
     m.add_argument("--into", metavar="FOLDER",

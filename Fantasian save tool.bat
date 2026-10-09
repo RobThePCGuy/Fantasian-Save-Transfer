@@ -31,6 +31,7 @@ set "choice="
 echo   1  Edit my Neo Dimension save (money, items, experience)
 echo   2  Bring an Apple Arcade save over from a Mac
 echo   3  Show me what is in a save
+echo   4  Move my Neo Dimension save back to a Mac
 echo   q  Quit
 echo.
 set /p "choice=  Which one? "
@@ -38,6 +39,7 @@ echo.
 if /i "%choice%"=="1" goto :edit
 if /i "%choice%"=="2" goto :import
 if /i "%choice%"=="3" goto :show
+if /i "%choice%"=="4" goto :to_mac
 if /i "%choice%"=="q" goto :nothing
 if "%choice%"=="" goto :nothing
 echo   Not one of the choices.
@@ -97,6 +99,10 @@ if not defined dropped goto :show_here
 goto :done
 :show_here
 %PY% fantasian.py slots
+goto :done
+
+:to_mac
+%PY% fantasian.py to-mac
 goto :done
 
 :try

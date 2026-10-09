@@ -123,8 +123,9 @@ python3 fantasian.py to-mac root.json --slots 2    # just GameData2
 python3 fantasian.py to-mac root.json --dry-run
 ```
 
-Copy `root.json` off the PC (USB stick, cloud drive, email to yourself) and run this on
-the Mac, or pick **5** in the Mac launcher. The Mac's game has to have saved once.
+On the PC, pick **4** in the Windows launcher (or run `to-mac` there): it copies your save
+to the Desktop as `Fantasian-Steam-root.json`. Carry that to the Mac (USB stick, cloud
+drive, email to yourself) and pick **5** in the Mac launcher, or run the commands above. The Mac's game has to have saved once.
 
 It converts the Steam save into an Apple Arcade database, built on a copy of this Mac's
 own, and then walks the same procedure as moving between accounts, for the same reason:
